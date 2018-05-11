@@ -50,8 +50,7 @@ function Base.getindex(x::LowerTriangularMatrix{T,N,N2}, i::Int, j::Int) where {
 end
 LinearAlgebra.transpose(x::UpperTriangularMatrix{T,N,N2}) where {T,N,N2} = LowerTriangularMatrix{T,N,N2}(x.data)
 LinearAlgebra.transpose(x::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = UpperTriangularMatrix{T,N,N2}(x.data)
-LinearAlgebra.adjoint(x::UpperTriangularMatrix{T,N,N2}) where {T<:Real,N,N2} = LowerTriangularMatrix{T,N,N2}(x.data)
-LinearAlgebra.adjoint(x::LowerTriangularMatrix{T,N,N2}) where {T<:Real,N,N2} = UpperTriangularMatrix{T,N,N2}(x.data)
-
-ltriangle(x) = (x-1)*x ÷ 2
-btriangle(x) = (x+1)*x ÷ 2
+@static if VERSION > v"0.6.9"
+    LinearAlgebra.adjoint(x::UpperTriangularMatrix{T,N,N2}) where {T<:Real,N,N2} = LowerTriangularMatrix{T,N,N2}(x.data)
+    LinearAlgebra.adjoint(x::LowerTriangularMatrix{T,N,N2}) where {T<:Real,N,N2} = UpperTriangularMatrix{T,N,N2}(x.data)
+end

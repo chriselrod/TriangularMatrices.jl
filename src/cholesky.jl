@@ -1,20 +1,7 @@
 
 
 function gen_chol_quote(T,N,N2)
-    q = quote
-        @fastmath @inbounds begin
-            U_1 = U.data[1]
-        end
-    end
-    @static if VERSION > v"0.6.9"
-        qa = q.args[2].args[3].args[3].args
-    else
-        qa = q.args[2].args[2].args[2].args
-    end
-    for i ∈ 2:N2
-        U_i = Symbol(:U_, i)
-        push!(qa, :($U_i = U.data[$i]))
-    end
+    q, qa = initial_quote(N2, :U_)
 
     for i ∈ 1:N
         lti = ltriangle(i)
@@ -24,7 +11,7 @@ function gen_chol_quote(T,N,N2)
         push!(qa, :($Ui_i = $U_i))
         for j ∈ 1:i - 1
             Uj_i = Symbol(:Ui_, lti + j)
-            push!(qa, :($Ui_i -= $Uj_i*Uj_i))
+            push!(qa, :($Ui_i -= $Uj_i*$Uj_i))
         end
         push!(qa, :($Ui_i = sqrt($Ui_i)))
 
@@ -34,8 +21,9 @@ function gen_chol_quote(T,N,N2)
             Uj_i = Symbol(:Ui_, ltj+i)
             U_i = Symbol(:U_, ltj+i)
             push!(qa, :($Uj_i = $U_i))
-            for k = 1:i - 1
-                push!(qa, :($Uj_i -= $Symbol(:Ui_, ltj+k) * $Symbol(:Ui_, lti+k)))
+            for k ∈ 1:i - 1
+                Ujk, Uik = Symbol(:Ui_, ltj+k), Symbol(:Ui_, lti+k)
+                push!(qa, :($Uj_i -= $Ujk * $Uik))
             end
             push!(qa, :($Uj_i /= $Ui_i) )
         end
@@ -46,25 +34,12 @@ function gen_chol_quote(T,N,N2)
 
 end
 
-@generated function chol(A::SymmetricMatrix{T,N,N2}) where {T,N,N2}
+@generated function LinearAlgebra.chol(A::SymmetricMatrix{T,N,N2}) where {T,N,N2}
     gen_chol_quote(UpperTriangularMatrix{T,N,N2},N,N2)
 end
 
 function gen_revchol_quote(T,N,N2)
-    q = quote
-        @fastmath @inbounds begin
-            U_1 = U.data[1]
-        end
-    end
-    @static if VERSION > v"0.6.9"
-        qa = q.args[2].args[3].args[3].args
-    else
-        qa = q.args[2].args[2].args[2].args
-    end
-    for i ∈ 2:N2
-        U_i = Symbol(:U_, i)
-        push!(qa, :($U_i = U.data[$i]))
-    end
+    q, qa = initial_quote(N2, :U_)
 
     for i ∈ N:-1:1
         lti = ltriangle(i)
@@ -73,19 +48,21 @@ function gen_revchol_quote(T,N,N2)
         U_i = Symbol(:U_, bti)
         push!(qa, :($Ui_i = $U_i))
         for j ∈ i+1:N
-            Uj_i = Symbol(:Ui_, lti + j)
-            push!(qa, :($Ui_i -= $Uj_i*Uj_i))
+            Uj_i = Symbol(:Ui_, ltriangle(j) + i)
+            push!(qa, :($Ui_i -= $Uj_i*$Uj_i))
         end
         push!(qa, :($Ui_i = sqrt($Ui_i)))
 
 
-        for j ∈ i-1:-1:1
+        for j ∈ 1:i-1
             ltj = ltriangle(j)
-            Uj_i = Symbol(:Ui_, ltj+i)
-            U_i  = Symbol(:U_,  ltj+i)
+            Uj_i = Symbol(:Ui_, lti+j)
+            U_i  = Symbol(:U_,  lti+j)
             push!(qa, :($Uj_i = $U_i))
-            for k = i+1:N
-                push!(qa, :($Uj_i -= $Symbol(:Ui_, ltj+k) * $Symbol(:Ui_, lti+k)))
+            for k ∈ i+1:N
+                ltk = ltriangle(k)
+                Ujk, Uik = Symbol(:Ui_, ltk+j), Symbol(:Ui_, ltk+i)
+                push!(qa, :($Uj_i -= $Ujk * $Uik))
             end
             push!(qa, :($Uj_i /= $Ui_i) )
         end
@@ -97,5 +74,7 @@ function gen_revchol_quote(T,N,N2)
 end
 
 @generated function revchol(A::SymmetricMatrix{T,N,N2}) where {T,N,N2}
+    # q = gen_revchol_quote(UpperTriangularMatrix{T,N,N2},N,N2)
+    # q
     gen_revchol_quote(UpperTriangularMatrix{T,N,N2},N,N2)
 end
