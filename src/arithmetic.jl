@@ -156,10 +156,33 @@ xxt(A::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = xtx(UpperTriangularMatrix
 xtx(A::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = xxt(UpperTriangularMatrix{T,N,N2}(A.data))
 
 
-function gen_AL_quote()
+function AU_quote!(qa, N, N2)
+    
+end
+function UA_quote!(qa, N, N2)
 
 end
+function LU_quote!()
+    
+end
+function UL_quote!()
+    
+end
+function AS_quote!()
 
+end
+function US_quote!()
+
+end
+function SU_quote!()
+
+end
+function USU_quote!()
+
+end
+function LSL_quote!()
+
+end
 
 @generated function Base.:*(A::SMatrix{N3,N}, B::LowerTriangularMatrix{T,N,N2}) where {T,N,N2,N3}
     gen_lower_mul_quote(LowerTriangularMatrix{T,N,N2}, N, N2)

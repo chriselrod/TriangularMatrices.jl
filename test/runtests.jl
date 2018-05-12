@@ -6,4 +6,6 @@ else
 end
 
 # write your own tests here
-@test 1 == 2
+using StaticArrays
+
+x = @SMatrix randn(5,3)
