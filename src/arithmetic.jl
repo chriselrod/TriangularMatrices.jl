@@ -156,20 +156,108 @@ xxt(A::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = xtx(UpperTriangularMatrix
 xtx(A::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = xxt(UpperTriangularMatrix{T,N,N2}(A.data))
 
 
+# output is an N x N2 SMatrix
 function AU_quote!(qa, N, N2)
-    
+    for i ∈ 1:N2
+        lmi = (i-1)*N
+        lti = ltriangle(i)
+        for j ∈ 1:N
+            C_i = Symbol(:C_, j + lmi)
+            A_i = Symbol(:A_, j)
+            U_i = Symbol(:U_, lti + 1)
+            push!(qa, :($C_i = $A_i * $U_i) )
+            for k ∈ 2:i
+                A_i = Symbol(:A_, j + (k-1)*N)
+                U_i = Symbol(:U_, lti + k)
+                push!(qa, :($C_i += $A_i * $U_i) )
+            end
+        end
+    end
 end
 function UA_quote!(qa, N, N2)
+    for i ∈ 1:N2
+        lmi = (i-1)*N
+        # lti = ltriangle(i)
+        for j ∈ 1:N
+            # ltj = (j-1)*N
+            C_i = Symbol(:C_, j + lmi)
+            A_i = Symbol(:A_, j + lmi)
+            U_i = Symbol(:U_, btriangle(j)) # equivalent to j + ltriangle(j)
+            push!(qa, :($C_i = $A_i * $U_i) )
+            for k ∈ j+1:N
+                A_i = Symbol(:A_, k + lmi)
+                U_i = Symbol(:U_, j + ltriangle(k))
+                push!(qa, :($C_i += $A_i * $U_i) )
+            end
+        end
+    end
+end
 
-end
-function LU_quote!()
-    
-end
-function UL_quote!()
-    
-end
-function AS_quote!()
 
+
+# Shoot, L is row-major storate.
+# Must fix, or write row major extractor? #Writing for SMatrices anyway
+function LU_quote!(N)
+    for i ∈ 1:N
+        lmi = (i-1)*N
+        lti = ltriangle(i)
+        for j ∈ 1:N
+            ltj = ltriangle(j)
+            C_i = Symbol(:C_, j + lmi)
+            L_i = Symbol(:L_, 1 + ltj)
+            U_i = Symbol(:U_, 1 + lti)
+            push!(qa, :($C_i = $L_i * $U_i) )
+            for k ∈ 2:min(i,j)
+                L_i = Symbol(:L_, k + ltj)
+                U_i = Symbol(:U_, k + lti)
+                push!(qa, :($C_i += $L_i * $U_i) )
+            end
+        end
+    end
+end
+function UL_quote!(N)
+    for i ∈ 1:N
+        lmi = (i-1)*N
+        lti = ltriangle(i)
+        for j ∈ 1:N
+            k_start = max(i,j)
+            ltk = ltriangle(ltk)
+            C_i = Symbol(:C_, j + lmi)
+            U_i = Symbol(:U_, ltk + j)
+            L_i = Symbol(:L_, ltk + i)
+            push!(qa, :($C_i = $A1_i * $A2_i) )
+            for k ∈ k_start+1:N
+                ltk = ltriangle(k)
+                U_i = Symbol(:U_, ltk + j)
+                L_i = Symbol(:L_, ltk + i)
+                push!(qa, :($C_i += $U_i * $L_i) )
+            end
+        end
+    end
+end
+function AS_quote!(N,N2)
+    for i ∈ 1:N
+        lmi = (i-1)*N2
+        lti = ltriangle(i)
+        for j ∈ 1:N2
+            C_i = Symbol(:C_, j + lmi)
+            A_i = Symbol(:A_, j)
+            S_i = Symbol(:S_, 1 + lti)
+            push!(qa, :($C_i = $A_i * $S_i) )
+            for k ∈ 2:i #we're in upper triangle of S
+                A_i = Symbol(:A_, j + (k-1)*N2)
+                S_i = Symbol(:S_, k + lti)
+                push!(qa, :($C_i += $A_i * $S_i) )
+            end
+            for k ∈ 1+i:N
+                #we're in mirrored lower triangle
+                #thus, k is column, i is row
+                A_i = Symbol(:A_, j + (k-1)*N2)
+                S_i = Symbol(:S_, i + ltriangle(k))
+                push!(qa, :($C_i += $A_i * $S_i) )
+            end
+        end
+    end
 end
 function US_quote!()
 
@@ -183,7 +271,6 @@ end
 function LSL_quote!()
 
 end
-
 @generated function Base.:*(A::SMatrix{N3,N}, B::LowerTriangularMatrix{T,N,N2}) where {T,N,N2,N3}
     gen_lower_mul_quote(LowerTriangularMatrix{T,N,N2}, N, N2)
 end
