@@ -1,7 +1,7 @@
 
 
 function gen_chol_quote(T,N,N2)
-    q, qa = initial_quote(N2, :U_)
+    q, qa = initial_quote(N2, :U)
 
     for i ∈ 1:N
         lti = ltriangle(i)
@@ -34,12 +34,12 @@ function gen_chol_quote(T,N,N2)
 
 end
 
-@generated function LinearAlgebra.chol(A::SymmetricMatrix{T,N,N2}) where {T,N,N2}
+@generated function LinearAlgebra.chol(U::SymmetricMatrix{T,N,N2}) where {T,N,N2}
     gen_chol_quote(UpperTriangularMatrix{T,N,N2},N,N2)
 end
 
 function gen_revchol_quote(T,N,N2)
-    q, qa = initial_quote(N2, :U_)
+    q, qa = initial_quote(N2, :U)
 
     for i ∈ N:-1:1
         lti = ltriangle(i)
@@ -73,7 +73,7 @@ function gen_revchol_quote(T,N,N2)
 
 end
 
-@generated function revchol(A::SymmetricMatrix{T,N,N2}) where {T,N,N2}
+@generated function revchol(U::SymmetricMatrix{T,N,N2}) where {T,N,N2}
     # q = gen_revchol_quote(UpperTriangularMatrix{T,N,N2},N,N2)
     # q
     gen_revchol_quote(UpperTriangularMatrix{T,N,N2},N,N2)

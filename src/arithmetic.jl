@@ -259,6 +259,74 @@ function AS_quote!(N,N2)
         end
     end
 end
+
+
+function gen_AU_quote(N3, N, N2, T)
+    Ntotal = N3*N
+    q, qa = initial_quote(Ntotal, :A)
+    extract_linear!(qa, N2, :U)
+    AU_quote!(qa, N3, N)
+    push!(qa, :(StaticArrays.SArray{Tuple{$N3,$N},$T,2,$Ntotal}( ( @ntuple $Ntotal C ))))
+    q
+end
+@generated function Base.:*(A::SMatrix{N3,N,S}, U::UpperTriangularMatrix{T,N,N2}) where {S,T,N,N2,N3}
+    gen_AU_quote(N3, N, N2, promote_type(S,T))
+end
+function gen_LA_quote(N3, N, N2, T)
+    Ntotal = N3*N
+    q, qa = initial_quote(Ntotal, :L)
+    extract_transpose!(qa, N3, N, :A)
+    AU_quote!(qa, N3, N)
+    push!(qa, output_transpose(N,N3,T,:C))
+    q
+end
+@generated function Base.:*(L::LowerTriangularMatrix{T,N,N2}, A::SMatrix{N3,N,S}) where {S,T,N,N2,N3}
+    gen_LA_quote(N3, N, N2, promote_type(S,T))
+end
+
+function gen_UA_quote(N3, N, N2, T)
+    Ntotal = N3*N
+    q, qa = initial_quote(Ntotal, :A)
+    extract_linear!(qa, N2, :U)
+    UA_quote!(qa, N, N3)
+    push!(qa, :(StaticArrays.SArray{Tuple{$N,$N3},$T,2,$Ntotal}( ( @ntuple $Ntotal C ))))
+    q
+end
+@generated function Base.:*(U::UpperTriangularMatrix{T,N,N2}, A::SMatrix{N,N3,S}) where {S,T,N,N2,N3}
+    gen_UA_quote(N3, N, N2, promote_type(S,T))
+end
+
+function gen_AL_quote(N3, N, N2, T)
+    Ntotal = N3*N
+    q, qa = initial_quote(N2, :L)
+    extract_transpose!(qa, N3, N, :A)
+    UA_quote!(qa, N, N3)
+    push!(qa, output_transpose(N3,N,T,:C))
+    q
+end
+@generated function Base.:*(A::SMatrix{N3,N,S}, L::LowerTriangularMatrix{T,N,N2}) where {S,T,N,N2,N3}
+    gen_AL_quote(N3, N, N2, promote_type(S,T))
+end
+
+
+
+
+
+@generated function Base.:*(A::SMatrix{N3,N,S}, B::LowerTriangularMatrix{T,N,N2}) where {T,N,N2,N3}
+    gen_lower_mul_quote(LowerTriangularMatrix{T,N,N2}, N, N2)
+end
+@generated function Base.:*(A::LowerTriangularMatrix{T,N,N2}, B::SMatrix{N3,N}) where {T,N,N2,N3}
+    gen_lower_mul_quote(LowerTriangularMatrix{T,N,N2}, N, N2)
+end
+
+
+
+
+
+
+
+
+
 function US_quote!()
 
 end
@@ -270,16 +338,4 @@ function USU_quote!()
 end
 function LSL_quote!()
 
-end
-@generated function Base.:*(A::SMatrix{N3,N}, B::LowerTriangularMatrix{T,N,N2}) where {T,N,N2,N3}
-    gen_lower_mul_quote(LowerTriangularMatrix{T,N,N2}, N, N2)
-end
-@generated function Base.:*(A::SMatrix{N3,N}, B::UpperTriangularMatrix{T,N,N2}) where {T,N,N2,N3}
-    gen_lower_mul_quote(LowerTriangularMatrix{T,N,N2}, N, N2)
-end
-@generated function Base.:*(A::LowerTriangularMatrix{T,N,N2}, B::SMatrix{N3,N}) where {T,N,N2,N3}
-    gen_lower_mul_quote(LowerTriangularMatrix{T,N,N2}, N, N2)
-end
-@generated function Base.:*(A::UpperTriangularMatrix{T,N,N2}, B::SMatrix{N3,N}) where {T,N,N2,N3}
-    gen_lower_mul_quote(LowerTriangularMatrix{T,N,N2}, N, N2)
 end
