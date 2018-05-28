@@ -20,7 +20,7 @@ function initial_quote(N2::Int, prefix::Symbol = :A)
     q, qa
 end
 
-function extract_lniear!(qa, N, prefix = :B)
+function extract_linear!(qa, N, prefix = :B)
     prefix_ = Symbol(prefix, :_)
     for i ∈ 1:N
         push!(qa, :($(Symbol(prefix_, i)) = $(prefix).data[i]))

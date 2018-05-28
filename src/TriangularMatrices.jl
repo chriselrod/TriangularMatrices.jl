@@ -4,12 +4,17 @@ using Compat, Compat.LinearAlgebra
 const LinearAlgebra = Compat.LinearAlgebra
 using StaticArrays, Base.Cartesian
 
-const Sized{T,N} = Union{SVector{T,N}, NTuple{N,T}}
+const Sized{N,T} = Union{SVector{N,T}, NTuple{N,T}}
 
 export  SymmetricMatrix,
+        SymmetricMMatrix,
         LowerTriangularMatrix,
+        LowerTriangularMMatrix,
         UpperTriangularMatrix,
-        revchol
+        UpperTriangularMMatrix,
+        revchol,
+        xxt,
+        xtx
 
 ltriangle(x)::Int = (x-1)*x ÷ 2
 btriangle(x)::Int = (x+1)*x ÷ 2

@@ -3,7 +3,7 @@
 function gen_upper_mul_quote(T, N, N2)
     q, qa = initial_quote(N2)
     for i ∈ 1:N2
-        push!(qa, :($B_i = B.data[$i]))
+        push!(qa, :($(Symbol(:B_, i)) = B.data[$i]))
     end
     for i ∈ 1:N
         lti = ltriangle(i)
@@ -20,6 +20,7 @@ function gen_upper_mul_quote(T, N, N2)
         end
     end
     push!(q.args, :($T( ( @ntuple $N2 C ) )))
+    q
 end
 
 @generated function Base.:*(A::UpperTriangularMatrix{T,N,N2}, B::UpperTriangularMatrix{T,N,N2}) where {T,N,N2}
@@ -31,7 +32,7 @@ end
 function gen_lower_mul_quote(T, N, N2)
     q, qa = initial_quote(N2)
     for i ∈ 1:N2
-        push!(qa, :($B_i = B.data[$i]))
+        push!(qa, :($(Symbol(:B_, i)) = B.data[$i]))
     end
     for i ∈ 1:N
         lti = ltriangle(i)
@@ -49,6 +50,7 @@ function gen_lower_mul_quote(T, N, N2)
         end
     end
     push!(q.args, :($T( ( @ntuple $N2 C ) )))
+    q
 end
 
 @generated function Base.:*(A::LowerTriangularMatrix{T,N,N2}, B::LowerTriangularMatrix{T,N,N2}) where {T,N,N2}
@@ -75,6 +77,7 @@ function gen_upper_xxt_quote(T,N,N2)
         end
     end
     push!(q.args, :(SymmetricMatrix{T,N,N2}( ( @ntuple $N2 B ) )))
+    q
 end
 
 function gen_upper_xtx_quote(T,N,N2)
@@ -95,6 +98,7 @@ function gen_upper_xtx_quote(T,N,N2)
         end
     end
     push!(q.args, :(SymmetricMatrix{T,N,N2}( ( @ntuple $N2 B ) )))
+    q
 end
 
 
@@ -116,6 +120,7 @@ function gen_xxt_quote(T,N,N2)
         end
     end
     push!(q.args, :(SymmetricMatrix{T,N,N2}( ( @ntuple $N2 B ) )))
+    q
 end
 function gen_xtx_quote(T,N,N2)
     q, qa = initial_quote(N*N2)
@@ -135,6 +140,7 @@ function gen_xtx_quote(T,N,N2)
         end
     end
     push!(q.args, :(SymmetricMatrix{T,N,N2}( ( @ntuple $N2 B ) )))
+    q
 end
 
 
@@ -197,7 +203,7 @@ end
 
 # Shoot, L is row-major storate.
 # Must fix, or write row major extractor? #Writing for SMatrices anyway
-function LU_quote!(N)
+function LU_quote!(qa, N)
     for i ∈ 1:N
         lmi = (i-1)*N
         lti = ltriangle(i)
@@ -215,7 +221,7 @@ function LU_quote!(N)
         end
     end
 end
-function UL_quote!(N)
+function UL_quote!(qa, N)
     for i ∈ 1:N
         lmi = (i-1)*N
         lti = ltriangle(i)
@@ -235,7 +241,14 @@ function UL_quote!(N)
         end
     end
 end
-function AS_quote!(N,N2)
+@generated function Base.:*(U::UpperTriangularMatrix{T,N,N2}, L::LowerTriangularMatrix{T,N,N2}) where {T,N,N2}
+    q, qa = initial_quote(N2, :U)
+    extract_linear!(qa, N2, :L)
+    UL_quote!(qa, N)
+    
+end
+
+function AS_quote!(qa, N, N2)
     for i ∈ 1:N
         lmi = (i-1)*N2
         lti = ltriangle(i)
@@ -312,12 +325,12 @@ end
 
 
 
-@generated function Base.:*(A::SMatrix{N3,N,S}, B::LowerTriangularMatrix{T,N,N2}) where {T,N,N2,N3}
-    gen_lower_mul_quote(LowerTriangularMatrix{T,N,N2}, N, N2)
-end
-@generated function Base.:*(A::LowerTriangularMatrix{T,N,N2}, B::SMatrix{N3,N}) where {T,N,N2,N3}
-    gen_lower_mul_quote(LowerTriangularMatrix{T,N,N2}, N, N2)
-end
+# @generated function Base.:*(A::SMatrix{N3,N}, B::LowerTriangularMatrix{T,N,N2}) where {T,N,N2,N3}
+#     gen_lower_mul_quote(LowerTriangularMatrix{T,N,N2}, N, N2)
+# end
+# @generated function Base.:*(A::LowerTriangularMatrix{T,N,N2}, B::SMatrix{N3,N}) where {T,N,N2,N3}
+#     gen_lower_mul_quote(LowerTriangularMatrix{T,N,N2}, N, N2)
+# end
 
 
 

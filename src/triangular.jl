@@ -6,51 +6,197 @@ As an implementation detail, indexing with @inbounds into the 0-triangle (ie, lo
 """
 abstract type TriangularMatrix{T, N, N2} <: AbstractMatrix{T} end
 
-struct UpperTriangularMatrix{T, N, N2} <: TriangularMatrix{T, N, N2}
+abstract type AbstractUpperTriangular{T, N, N2} <: TriangularMatrix{T, N, N2} end
+abstract type AbstractLowerTriangular{T, N, N2} <: TriangularMatrix{T, N, N2} end
+
+struct UpperTriangularMatrix{T, N, N2} <: AbstractUpperTriangular{T, N, N2}
     data::NTuple{N2,T}
 end
-struct LowerTriangularMatrix{T, N, N2} <: TriangularMatrix{T, N, N2}
+struct LowerTriangularMatrix{T, N, N2} <: AbstractLowerTriangular{T, N, N2}
     data::NTuple{N2,T}
+end
+struct UpperTriangularMMatrix{T, N, N2} <: AbstractUpperTriangular{T, N, N2}
+    data::Base.RefValue{NTuple{N2,T}}
+    function UpperTriangularMMatrix{T, N, N2}(d::Base.RefValue{NTuple{N2,T}}) where {T,N,N2}
+        isbits(T) || error("Can only construct mutable isbits matrices.")
+        new{T,N,N2}(d)
+    end
+end
+struct LowerTriangularMMatrix{T, N, N2} <: AbstractLowerTriangular{T, N, N2}
+    data::Base.RefValue{NTuple{N2,T}}
+    function LowerTriangularMMatrix{T, N, N2}(d::Base.RefValue{NTuple{N2,T}}) where {T,N,N2}
+        isbits(T) || error("Can only construct mutable isbits matrices.")
+        new{T,N,N2}(d)
+    end
 end
 Base.size(::TriangularMatrix{T,N}) where {T,N} = (N,N)
 
-
-function UpperTriangularMatrix(x::AbstractMatrix{T}) where T
-    N = size(x,1)
-    @assert N == size(x,2)
+function upper_triangle_quote(N, ::Type{T}) where T
     N2 = btriangle(N)
-    y = Vector{T}(undef, N2)
+    q = quote
+        @inbounds begin
+        end
+    end
+    @static if VERSION > v"0.6.9"
+        qa = q.args[2].args[3].args
+    else
+        qa = q.args[2].args[2].args
+    end
     ind = 0
     for i ∈ 1:N, j ∈ 1:i
         ind += 1
-        y[ind] = x[j,i]
+        A_i = Symbol(:A_, ind)
+        push!(qa, :( $A_i = A[$j,$i] ) )
     end
-    UpperTriangularMatrix{T,N,N2}(ntuple(i -> y[i], N2))
+    q, N2
 end
+function lower_triangle_quote(N, ::Type{T}) where T
+    N2 = btriangle(N)
+    q = quote
+        @inbounds begin
+        end
+    end
+    @static if VERSION > v"0.6.9"
+        qa = q.args[2].args[3].args
+    else
+        qa = q.args[2].args[2].args
+    end
+    for i ∈ 1:N, j ∈ i:N
+        A_i = Symbol(:A_, ltriangle(j)+i )
+        push!(qa, :( $A_i = A[$j,$i] ) )
+    end
+    push!(q.args, :($M{$T,$N,$N2}( @ntuple $N2 A )))
+    q, N2
+end
+function UpperTriangularMatrix(A::AbstractMatrix)
+    m, n = size(A)
+    @assert m == n
+    UpperTriangularMatrix(A, Val(n))
+end
+@generated function UpperTriangularMatrix(A::AbstractMatrix{T}, ::Val{N}) where {T,N}
+    q, N2 = upper_triangle_quote(N, T)
+    push!(q.args, :(UpperTriangularMatrix{$T,$N,$N2}( @ntuple $N2 A )))
+    q
+end
+function UpperTriangularMMatrix(A::AbstractMatrix)
+    m, n = size(A)
+    @assert m == n
+    UpperTriangularMMatrix(A, Val(n))
+end
+@generated function UpperTriangularMMatrix(A::AbstractMatrix{T}, ::Val{N}) where {T,N}
+    q, N2 = upper_triangle_quote(N, T)
+    push!(q.args, :(UpperTriangularMMatrix{$T,$N,$N2}( Ref( @ntuple $N2 A ))))
+    q
+end
+function LowerTriangularMatrix(A::AbstractMatrix)
+    m, n = size(A)
+    @assert m == n
+    LowerTriangularMatrix(A, Val(n))
+end
+@generated function LowerTriangularMatrix(A::AbstractMatrix{T}, ::Val{N}) where {T,N}
+    q, N2 = lower_triangle_quote(N, T)
+    push!(q.args, :(LowerTriangularMatrix{$T,$N,$N2}( @ntuple $N2 A )))
+    q
+end
+function LowerTriangularMMatrix(A::AbstractMatrix)
+    m, n = size(A)
+    @assert m == n
+    LowerTriangularMMatrix(A, Val(n))
+end
+@generated function LowerTriangularMMatrix(A::AbstractMatrix{T}, ::Val{N}) where {T,N}
+    q, N2 = lower_triangle_quote(N, T)
+    push!(q.args, :(LowerTriangularMMatrix{$T,$N,$N2}( Ref( @ntuple $N2 A ))))
+    q
+end
+UpperTriangularMatrix(data::NTuple{N2,T}) where {T,N2} = UpperTriangularMatrix(data,ValI(Val{N2}()))
+UpperTriangularMMatrix(data::NTuple{N2,T}) where {T,N2} = UpperTriangularMMatrix(data,ValI(Val{N2}()))
+UpperTriangularMatrix(data::SVector{N2,T}) where {T,N2} = UpperTriangularMatrix(data.data,ValI(Val{N2}()))
+UpperTriangularMMatrix(data::SVector{N2,T}) where {T,N2} = UpperTriangularMMatrix(data.data,ValI(Val{N2}()))
+UpperTriangularMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = UpperTriangularMatrix{T,N,N2}(data)
+UpperTriangularMMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = UpperTriangularMMatrix{T,N,N2}(Ref(data))
+UpperTriangularMatrix(data::UpperTriangularMMatrix{T,N,N2}) where {T,N,N2} = UpperTriangularMatrix{T,N,N2}(data.data[])
+UpperTriangularMMatrix(data::UpperTriangularMatrix{T,N,N2}) where {T,N,N2} = UpperTriangularMMatrix{T,N,N2}(Ref(data.data))
 
-function Base.getindex(x::UpperTriangularMatrix{T,N,N2}, i::Int, j::Int) where {T,N,N2}
+LowerTriangularMatrix(data::NTuple{N2,T}) where {T,N2} = LowerTriangularMatrix(data,ValI(Val{N2}()))
+LowerTriangularMMatrix(data::NTuple{N2,T}) where {T,N2} = LowerTriangularMMatrix(data,ValI(Val{N2}()))
+LowerTriangularMatrix(data::SVector{N2,T}) where {T,N2} = LowerTriangularMatrix(data.data,ValI(Val{N2}()))
+LowerTriangularMMatrix(data::SVector{N2,T}) where {T,N2} = LowerTriangularMMatrix(data.data,ValI(Val{N2}()))
+LowerTriangularMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = LowerTriangularMatrix{T,N,N2}(data)
+LowerTriangularMMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = LowerTriangularMMatrix{T,N,N2}(Ref(data))
+LowerTriangularMatrix(data::LowerTriangularMMatrix{T,N,N2}) where {T,N,N2} = LowerTriangularMatrix{T,N,N2}(data.data[])
+LowerTriangularMMatrix(data::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = LowerTriangularMMatrix{T,N,N2}(Ref(data.data))
+
+
+@inline function Base.getindex(A::UpperTriangularMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
     @boundscheck begin
-        max(i,j) > N && throw("BoundsError: index ($i, $j) is out of bounds.")
+        max(i,j) > N && throw(BoundsError())
         if i > j
             return zero(T)
         end
     end
-    @inbounds out = x.data[ltriangle(j)+i]
+    @inbounds out = A.data[ltriangle(j)+i]
     out
 end
-function Base.getindex(x::LowerTriangularMatrix{T,N,N2}, i::Int, j::Int) where {T,N,N2}
+@inline function Base.getindex(A::LowerTriangularMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
     @boundscheck begin
-        max(i,j) > N && throw("BoundsError: index ($i, $j) is out of bounds.")
+        max(i,j) > N && throw(BoundsError())
         if i < j
             return zero(T)
         end
     end
-    @inbounds out = x.data[ltriangle(i)+j]
+    @inbounds out = A.data[ltriangle(i)+j]
     out
 end
-LinearAlgebra.transpose(x::UpperTriangularMatrix{T,N,N2}) where {T,N,N2} = LowerTriangularMatrix{T,N,N2}(x.data)
-LinearAlgebra.transpose(x::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = UpperTriangularMatrix{T,N,N2}(x.data)
+@inline function Base.getindex(A::UpperTriangularMMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
+    @boundscheck begin
+        max(i,j) > N && throw(BoundsError())
+        if i > j
+            return zero(T)
+        end
+    end
+    @inbounds out = A.data[][ltriangle(j)+i]
+    out
+end
+@inline function Base.getindex(A::LowerTriangularMMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
+    @boundscheck begin
+        max(i,j) > N && throw(BoundsError())
+        if i < j
+            return zero(T)
+        end
+    end
+    @inbounds out = A.data[][ltriangle(i)+j]
+    out
+end
+@inline function Base.setindex!(A::UpperTriangularMMatrix{T,N,N2}, val, i::Integer, j::Integer) where  {T,N,N2}
+    @boundscheck begin
+        max(i,j) > N && throw(BoundsError())
+        if i > j
+            throw("Cannot set index within lower triangular of UpperTriangularMatrix.")
+        end
+    end
+    unsafe_store!(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), convert(T, val), ltriangle(j)+i)
+    return val
+end
+@inline function Base.setindex!(A::LowerTriangularMMatrix{T,N,N2}, val, i::Integer, j::Integer) where  {T,N,N2}
+    @boundscheck begin
+        max(i,j) > N && throw(BoundsError())
+        if i < j
+            throw("Cannot set index within upper triangular of LowerTriangularMatrix.")
+        end
+    end
+    unsafe_store!(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), convert(T, val), ltriangle(i)+j)
+    return val
+end
+
+"""
+This always returns the static form so that it is non-allocating.
+"""
+LinearAlgebra.transpose(x::AbstractUpperTriangular{T,N,N2}) where {T,N,N2} = LowerTriangularMatrix{T,N,N2}(x.data)
+LinearAlgebra.transpose(x::AbstractLowerTriangular{T,N,N2}) where {T,N,N2} = UpperTriangularMatrix{T,N,N2}(x.data)
 @static if VERSION > v"0.6.9"
-    LinearAlgebra.adjoint(x::UpperTriangularMatrix{T,N,N2}) where {T<:Real,N,N2} = LowerTriangularMatrix{T,N,N2}(x.data)
-    LinearAlgebra.adjoint(x::LowerTriangularMatrix{T,N,N2}) where {T<:Real,N,N2} = UpperTriangularMatrix{T,N,N2}(x.data)
+    """
+    Taking the adjoint returns a static matrix so that it is non-allocating.
+    """
+    LinearAlgebra.adjoint(x::AbstractUpperTriangular{T,N,N2}) where {T<:Real,N,N2} = LowerTriangularMatrix{T,N,N2}(x.data)
+    LinearAlgebra.adjoint(x::AbstractLowerTriangular{T,N,N2}) where {T<:Real,N,N2} = UpperTriangularMatrix{T,N,N2}(x.data)
 end
