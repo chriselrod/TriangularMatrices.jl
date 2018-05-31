@@ -27,7 +27,7 @@ function gen_inv_quote(T, N, N2)
     push!(q.args, :($T( ( @ntuple $N2 Ui ) )))
     q
 end
-function gen_ip_inv_quote!(qa, N, N2, Ui = :Ui, U = :U, extract = extract_ind)
+function gen_ip_inv_quote!(qa, N, N2, Ui = :Ui, U = :U, extract = extract_symbol)
 
     temp_num = 0
 
