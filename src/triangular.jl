@@ -126,7 +126,10 @@ LowerTriangularMMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = LowerTrian
 LowerTriangularMatrix(data::LowerTriangularMMatrix{T,N,N2}) where {T,N,N2} = LowerTriangularMatrix{T,N,N2}(data.data[])
 LowerTriangularMMatrix(data::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = LowerTriangularMMatrix{T,N,N2}(Ref(data.data))
 
-
+@inline Base.getindex(A::UpperTriangularMatrix, i::Integer) = A.data[i]
+@inline Base.getindex(A::LowerTriangularMatrix, i::Integer) = A.data[i]
+@inline Base.getindex(A::UpperTriangularMMatrix, i::Integer) = A.data[][i]
+@inline Base.getindex(A::LowerTriangularMMatrix, i::Integer) = A.data[][i]
 @inline function Base.getindex(A::UpperTriangularMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
     @boundscheck begin
         max(i,j) > N && throw(BoundsError())
@@ -166,6 +169,11 @@ end
     end
     @inbounds out = A.data[][ltriangle(i)+j]
     out
+end
+@inline function Base.setindex!(A::TriangularMatrix{T,N,N2}, val, i::Integer) where  {T,N,N2}
+    @boundscheck i > N2 && throw(BoundsError())
+    unsafe_store!(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), convert(T, val), i)
+    return val
 end
 @inline function Base.setindex!(A::UpperTriangularMMatrix{T,N,N2}, val, i::Integer, j::Integer) where  {T,N,N2}
     @boundscheck begin

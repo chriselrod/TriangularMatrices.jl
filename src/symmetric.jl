@@ -26,6 +26,11 @@ end
     push!(q.args, :(SymmetricMatrix{$T,$N,$N2}( @ntuple $N2 A )))
     q
 end
+function SymmetricMMatrix(A::AbstractMatrix)
+    m, n = size(A)
+    @assert m == n
+    SymmetricMMatrix(A, Val(n))
+end
 @generated function SymmetricMMatrix(A::AbstractMatrix{T}, ::Val{N}) where {T,N}
     q, N2 = upper_triangle_quote(N, T)
     push!(q.args, :(SymmetricMMatrix{$T,$N,$N2}( Ref( @ntuple $N2 A ))))
@@ -49,22 +54,30 @@ SymmetricMatrix(data::SymmetricMMatrix{T,N,N2}) where {T,N,N2} = SymmetricMatrix
 SymmetricMMatrix(data::SymmetricMatrix{T,N,N2}) where {T,N,N2} = SymmetricMMatrix{T,N,N2}(Ref(data.data))
 
 
-
-function Base.getindex(x::SymmetricMatrix{T,N,N2}, i::Int, j::Int) where {T,N,N2}
+@inline Base.getindex(A::SymmetricMatrix, i::Integer) = A.data[i]
+@inline Base.getindex(A::SymmetricMMatrix, i::Integer) = A.data[][i]
+@inline function Base.getindex(A::SymmetricMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
     @boundscheck begin
         max(i,j) > N && throw("BoundsError: index ($i, $j) is out of bounds.")
     end
     i, j = minmax(i, j)
-    @inbounds out = x.data[ltriangle(j)+i]
+    @inbounds out = A.data[ltriangle(j)+i]
     out
 end
-function Base.getindex(x::SymmetricMMatrix{T,N,N2}, i::Int, j::Int) where {T,N,N2}
+@inline function Base.getindex(A::SymmetricMMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
     @boundscheck begin
         max(i,j) > N && throw("BoundsError: index ($i, $j) is out of bounds.")
     end
     i, j = minmax(i, j)
-    @inbounds out = x.data[][ltriangle(j)+i]
+    @inbounds out = A.data[][ltriangle(j)+i]
     out
+end
+@inline function Base.setindex!(A::SymmetricMMatrix{T,N,N2}, val, i::Integer) where  {T,N,N2}
+    @boundscheck begin
+        i > N && throw(BoundsError())
+    end
+    unsafe_store!(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), convert(T, val), i)
+    return val
 end
 @inline function Base.setindex!(A::SymmetricMMatrix{T,N,N2}, val, i::Integer, j::Integer) where  {T,N,N2}
     @boundscheck begin
