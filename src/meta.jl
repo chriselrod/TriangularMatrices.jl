@@ -9,6 +9,12 @@ function create_quote()
     else
         qa = q.args[2].args[2].args[2].args
     end
+    # q = quote @inbounds begin end end
+    # @static if VERSION > v"0.7-"
+    #     qa = q.args[2].args[3].args
+    # else
+    #     qa = q.args[2].args[2].args
+    # end
     q, qa
 end
 

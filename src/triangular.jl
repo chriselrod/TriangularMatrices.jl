@@ -32,7 +32,7 @@ end
 Base.size(::TriangularMatrix{T,N}) where {T,N} = (N,N)
 
 function upper_triangle_quote(N, ::Type{T}) where T
-    N2 = btriangle(N)
+    N2 = big_triangle(N)
     q = quote
         @inbounds begin
         end
@@ -51,7 +51,7 @@ function upper_triangle_quote(N, ::Type{T}) where T
     q, N2
 end
 function lower_triangle_quote(N, ::Type{T}) where T
-    N2 = btriangle(N)
+    N2 = big_triangle(N)
     q = quote
         @inbounds begin
         end
@@ -62,7 +62,7 @@ function lower_triangle_quote(N, ::Type{T}) where T
         qa = q.args[2].args[2].args
     end
     for i ∈ 1:N, j ∈ i:N
-        A_i = Symbol(:A_, ltriangle(j)+i )
+        A_i = Symbol(:A_, small_triangle(j)+i )
         push!(qa, :( $A_i = A[$j,$i] ) )
     end
     push!(q.args, :($M{$T,$N,$N2}( @ntuple $N2 A )))
@@ -128,8 +128,12 @@ LowerTriangularMMatrix(data::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = Low
 
 @inline Base.getindex(A::UpperTriangularMatrix, i::Integer) = A.data[i]
 @inline Base.getindex(A::LowerTriangularMatrix, i::Integer) = A.data[i]
-@inline Base.getindex(A::UpperTriangularMMatrix, i::Integer) = A.data[][i]
-@inline Base.getindex(A::LowerTriangularMMatrix, i::Integer) = A.data[][i]
+@inline function Base.getindex(A::UpperTriangularMMatrix{T}, i::Integer) where T
+    unsafe_load(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), i)
+end
+@inline function Base.getindex(A::LowerTriangularMMatrix{T}, i::Integer) where T
+    unsafe_load(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), i)
+end
 @inline function Base.getindex(A::UpperTriangularMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
     @boundscheck begin
         max(i,j) > N && throw(BoundsError())
@@ -137,7 +141,7 @@ LowerTriangularMMatrix(data::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = Low
             return zero(T)
         end
     end
-    @inbounds out = A.data[ltriangle(j)+i]
+    @inbounds out = A.data[small_triangle(j)+i]
     out
 end
 @inline function Base.getindex(A::LowerTriangularMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
@@ -147,7 +151,7 @@ end
             return zero(T)
         end
     end
-    @inbounds out = A.data[ltriangle(i)+j]
+    @inbounds out = A.data[small_triangle(i)+j]
     out
 end
 @inline function Base.getindex(A::UpperTriangularMMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
@@ -157,8 +161,9 @@ end
             return zero(T)
         end
     end
-    @inbounds out = A.data[][ltriangle(j)+i]
-    out
+    # @inbounds out = A.data[][small_triangle(j)+i]
+    # out
+    unsafe_load(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), small_triangle(j)+i)
 end
 @inline function Base.getindex(A::LowerTriangularMMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
     @boundscheck begin
@@ -167,8 +172,9 @@ end
             return zero(T)
         end
     end
-    @inbounds out = A.data[][ltriangle(i)+j]
-    out
+    # @inbounds out = A.data[][small_triangle(i)+j]
+    # out
+    unsafe_load(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), small_triangle(i)+j)
 end
 @inline function Base.setindex!(A::TriangularMatrix{T,N,N2}, val, i::Integer) where  {T,N,N2}
     @boundscheck i > N2 && throw(BoundsError())
@@ -182,7 +188,7 @@ end
             throw("Cannot set index within lower triangular of UpperTriangularMatrix.")
         end
     end
-    unsafe_store!(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), convert(T, val), ltriangle(j)+i)
+    unsafe_store!(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), convert(T, val), small_triangle(j)+i)
     return val
 end
 @inline function Base.setindex!(A::LowerTriangularMMatrix{T,N,N2}, val, i::Integer, j::Integer) where  {T,N,N2}
@@ -192,7 +198,7 @@ end
             throw("Cannot set index within upper triangular of LowerTriangularMatrix.")
         end
     end
-    unsafe_store!(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), convert(T, val), ltriangle(i)+j)
+    unsafe_store!(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), convert(T, val), small_triangle(i)+j)
     return val
 end
 

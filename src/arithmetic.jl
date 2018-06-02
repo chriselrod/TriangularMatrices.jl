@@ -6,14 +6,14 @@ function gen_upper_mul_quote(T, N, N2)
         push!(qa, :($(Symbol(:B_, i)) = B.data[$i]))
     end
     for i ∈ 1:N
-        lti = ltriangle(i)
+        lti = small_triangle(i)
         for j ∈ 1:i
             C_i = Symbol(:C_, lti + j)
             B_i = Symbol(:B_, lti + j)
-            A_i = Symbol(:A_, ltriangle(j) + j)
+            A_i = Symbol(:A_, small_triangle(j) + j)
             push!(qa, :($C_i = $A_i * $B_i) )
             for k ∈ j+1:i
-                A_i = Symbol(:A_, ltriangle(k) + j)
+                A_i = Symbol(:A_, small_triangle(k) + j)
                 B_i = Symbol(:B_, lti + k)
                 push!(qa, :($C_i += $A_i * $B_i) )
             end
@@ -35,16 +35,16 @@ function gen_lower_mul_quote(T, N, N2)
         push!(qa, :($(Symbol(:B_, i)) = B.data[$i]))
     end
     for i ∈ 1:N
-        lti = ltriangle(i)
+        lti = small_triangle(i)
         for j ∈ i:N
-            ltj = ltriangle(j)
+            ltj = small_triangle(j)
             C_i = Symbol(:C_, ltj + i)
             B_i = Symbol(:B_, lti + i)
             A_i = Symbol(:A_, ltj + i)
             push!(qa, :($C_i = $A_i * $B_i) )
             for k ∈ i+1:j
                 A_i = Symbol(:A_, ltj + k)
-                B_i = Symbol(:B_, ltriangle(k) + i)
+                B_i = Symbol(:B_, small_triangle(k) + i)
                 push!(qa, :($C_i += $A_i * $B_i) )
             end
         end
@@ -62,14 +62,14 @@ end
 function gen_upper_xxt_quote(T,N,N2)
     q, qa = initial_quote(N2)
     for i ∈ 1:N
-        lti = ltriangle(i)
+        lti = small_triangle(i)
         for j ∈ 1:i
             B_i = Symbol(:B_, lti + j)
             A1_i = Symbol(:A_, lti + j)
             A2_i = Symbol(:A_, lti + i)
             push!(qa, :($B_i = $A1_i * $A2_i) )
             for k ∈ i+1:N
-                ltk = ltriangle(k)
+                ltk = small_triangle(k)
                 A1_i = Symbol(:A_, ltk + j)
                 A2_i = Symbol(:A_, ltk + i)
                 push!(qa, :($B_i += $A1_i * $A2_i) )
@@ -83,9 +83,9 @@ end
 function gen_upper_xtx_quote(T,N,N2)
     q, qa = initial_quote(N2)
     for i ∈ 1:N
-        lti = ltriangle(i)
+        lti = small_triangle(i)
         for j ∈ 1:i
-            ltj = ltriangle(j)
+            ltj = small_triangle(j)
             B_i = Symbol(:B_, lti + j)
             A1_i = Symbol(:A_, ltj + 1)
             A2_i = Symbol(:A_, lti + 1)
@@ -166,7 +166,7 @@ xtx(A::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = xxt(UpperTriangularMatrix
 function AU_quote!(qa, N, N2)
     for i ∈ 1:N2
         lmi = (i-1)*N
-        lti = ltriangle(i)
+        lti = small_triangle(i)
         for j ∈ 1:N
             C_i = Symbol(:C_, j + lmi)
             A_i = Symbol(:A_, j)
@@ -183,16 +183,16 @@ end
 function UA_quote!(qa, N, N2)
     for i ∈ 1:N2
         lmi = (i-1)*N
-        # lti = ltriangle(i)
+        # lti = small_triangle(i)
         for j ∈ 1:N
             # ltj = (j-1)*N
             C_i = Symbol(:C_, j + lmi)
             A_i = Symbol(:A_, j + lmi)
-            U_i = Symbol(:U_, btriangle(j)) # equivalent to j + ltriangle(j)
+            U_i = Symbol(:U_, big_triangle(j)) # equivalent to j + small_triangle(j)
             push!(qa, :($C_i = $A_i * $U_i) )
             for k ∈ j+1:N
                 A_i = Symbol(:A_, k + lmi)
-                U_i = Symbol(:U_, j + ltriangle(k))
+                U_i = Symbol(:U_, j + small_triangle(k))
                 push!(qa, :($C_i += $A_i * $U_i) )
             end
         end
@@ -206,9 +206,9 @@ end
 function LU_quote!(qa, N)
     for i ∈ 1:N
         lmi = (i-1)*N
-        lti = ltriangle(i)
+        lti = small_triangle(i)
         for j ∈ 1:N
-            ltj = ltriangle(j)
+            ltj = small_triangle(j)
             C_i = Symbol(:C_, j + lmi)
             L_i = Symbol(:L_, 1 + ltj)
             U_i = Symbol(:U_, 1 + lti)
@@ -224,16 +224,16 @@ end
 function UL_quote!(qa, N)
     for i ∈ 1:N
         lmi = (i-1)*N
-        lti = ltriangle(i)
+        lti = small_triangle(i)
         for j ∈ 1:N
             k_start = max(i,j)
-            ltk = ltriangle(ltk)
+            ltk = small_triangle(k_start)
             C_i = Symbol(:C_, j + lmi)
             U_i = Symbol(:U_, ltk + j)
             L_i = Symbol(:L_, ltk + i)
-            push!(qa, :($C_i = $A1_i * $A2_i) )
+            push!(qa, :($C_i = $U_i * $L_i) )
             for k ∈ k_start+1:N
-                ltk = ltriangle(k)
+                ltk = small_triangle(k)
                 U_i = Symbol(:U_, ltk + j)
                 L_i = Symbol(:L_, ltk + i)
                 push!(qa, :($C_i += $U_i * $L_i) )
@@ -242,16 +242,18 @@ function UL_quote!(qa, N)
     end
 end
 @generated function Base.:*(U::UpperTriangularMatrix{T,N,N2}, L::LowerTriangularMatrix{T,N,N2}) where {T,N,N2}
+    # println("Okay...")
     q, qa = initial_quote(N2, :U)
     extract_linear!(qa, N2, :L)
     UL_quote!(qa, N)
-    
+    push!(q.args, :( SMatrix{$N,$N}( @ntuple $(N*N) C ) ))    
+    q
 end
 
 function AS_quote!(qa, N, N2)
     for i ∈ 1:N
         lmi = (i-1)*N2
-        lti = ltriangle(i)
+        lti = small_triangle(i)
         for j ∈ 1:N2
             C_i = Symbol(:C_, j + lmi)
             A_i = Symbol(:A_, j)
@@ -266,7 +268,7 @@ function AS_quote!(qa, N, N2)
                 #we're in mirrored lower triangle
                 #thus, k is column, i is row
                 A_i = Symbol(:A_, j + (k-1)*N2)
-                S_i = Symbol(:S_, i + ltriangle(k))
+                S_i = Symbol(:S_, i + small_triangle(k))
                 push!(qa, :($C_i += $A_i * $S_i) )
             end
         end
@@ -279,7 +281,7 @@ function gen_AU_quote(N3, N, N2, T)
     q, qa = initial_quote(Ntotal, :A)
     extract_linear!(qa, N2, :U)
     AU_quote!(qa, N3, N)
-    push!(qa, :(StaticArrays.SArray{Tuple{$N3,$N},$T,2,$Ntotal}( ( @ntuple $Ntotal C ))))
+    push!(q.args, :(StaticArrays.SArray{Tuple{$N3,$N},$T,2,$Ntotal}( ( @ntuple $Ntotal C ))))
     q
 end
 @generated function Base.:*(A::SMatrix{N3,N,S}, U::UpperTriangularMatrix{T,N,N2}) where {S,T,N,N2,N3}
@@ -290,23 +292,23 @@ function gen_LA_quote(N3, N, N2, T)
     q, qa = initial_quote(Ntotal, :L)
     extract_transpose!(qa, N3, N, :A)
     AU_quote!(qa, N3, N)
-    push!(qa, output_transpose(N,N3,T,:C))
+    push!(q.args, output_transpose(N,N3,T,:C))
     q
 end
 @generated function Base.:*(L::LowerTriangularMatrix{T,N,N2}, A::SMatrix{N3,N,S}) where {S,T,N,N2,N3}
     gen_LA_quote(N3, N, N2, promote_type(S,T))
 end
 
-function gen_UA_quote(N3, N, N2, T)
+function gen_UA_quote(N3::Int, N::Int, N2::Int, ::Type{T}) where T
     Ntotal = N3*N
     q, qa = initial_quote(Ntotal, :A)
     extract_linear!(qa, N2, :U)
     UA_quote!(qa, N, N3)
-    push!(qa, :(StaticArrays.SArray{Tuple{$N,$N3},$T,2,$Ntotal}( ( @ntuple $Ntotal C ))))
+    push!(q.args, :(StaticArrays.SArray{Tuple{$N,$N3},$T,2,$Ntotal}( ( @ntuple $Ntotal C ))))
     q
 end
-@generated function Base.:*(U::UpperTriangularMatrix{T,N,N2}, A::SMatrix{N,N3,S}) where {S,T,N,N2,N3}
-    gen_UA_quote(N3, N, N2, promote_type(S,T))
+@generated function Base.:*(U::UpperTriangularMatrix{T,N,L}, A::SMatrix{N,L2,S}) where {S,T,N,L,L2}
+    gen_UA_quote(L2, N, L, promote_type(S,T))
 end
 
 function gen_AL_quote(N3, N, N2, T)
@@ -314,7 +316,7 @@ function gen_AL_quote(N3, N, N2, T)
     q, qa = initial_quote(N2, :L)
     extract_transpose!(qa, N3, N, :A)
     UA_quote!(qa, N, N3)
-    push!(qa, output_transpose(N3,N,T,:C))
+    push!(q.args, output_transpose(N3,N,T,:C))
     q
 end
 @generated function Base.:*(A::SMatrix{N3,N,S}, L::LowerTriangularMatrix{T,N,N2}) where {S,T,N,N2,N3}
@@ -323,6 +325,11 @@ end
 
 
 
+
+function rank_downdate!()
+
+
+end
 
 
 # @generated function Base.:*(A::SMatrix{N3,N}, B::LowerTriangularMatrix{T,N,N2}) where {T,N,N2,N3}
