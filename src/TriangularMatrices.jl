@@ -6,6 +6,8 @@ using StaticArrays, Base.Cartesian
 
 const Sized{N,T} = Union{SVector{N,T}, NTuple{N,T}}
 
+import LinearAlgebra: Adjoint
+
 export  SymmetricMatrix,
         SymmetricMMatrix,
         LowerTriangularMatrix,
@@ -26,8 +28,8 @@ export  SymmetricMatrix,
 # Halfcut is the smallest possible value we need to have a kernel for.
 # If cutoff is even, cutoff + 1 would dispatch to kernels for halfcut+1 and halfcut.
 # If cutoff is odd, cutoff + 1 would dispatch to kernels for halfcut.
-const cutoff = 24
-const halfcut = cld(cutoff, 2)
+const cutoff = 16
+# const halfcut = cld(cutoff, 2)
 
 small_triangle(x)::Int = (x-1)*x ÷ 2
 big_triangle(x)::Int = (x+1)*x ÷ 2
@@ -36,11 +38,12 @@ inv_triangle(x)::Int = (Int(sqrt(1+8x))-1) ÷ 2
 @generated ValBigT(::Val{x}) where x = Val{big_triangle(x)}()
 @generated ValInvT(::Val{x}) where x = Val{inv_triangle(x)}()
 
-include("triangular.jl")
-include("symmetric.jl")
 include("meta.jl")
-include("cholesky.jl")
-include("inverse.jl")
-include("arithmetic.jl")
+include("recursive_indexing.jl")
+include("matrix_types/triangular.jl")
+include("matrix_types/symmetric.jl")
+include("decomp_and_inversions/cholesky.jl")
+include("decomp_and_inversions/inverse.jl")
+include("arithmetic/arithmetic.jl")
 
 end # module

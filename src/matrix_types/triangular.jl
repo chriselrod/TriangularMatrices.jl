@@ -4,40 +4,50 @@ Upper triangular matrices are column major, and lower triangular row major.
 
 As an implementation detail, indexing with @inbounds into the 0-triangle (ie, lower triangle of an Upper Triangular matrix) is undefined. This is because that check creates a branch.
 """
-abstract type TriangularMatrix{T, N, N2} <: AbstractMatrix{T} end
+abstract type AbstractTriangularMatrix{T, N, N2} <: AbstractMatrix{T} end
 
 abstract type AbstractUpperTriangular{T, N, N2} <: TriangularMatrix{T, N, N2} end
 abstract type AbstractLowerTriangular{T, N, N2} <: TriangularMatrix{T, N, N2} end
+abstract type MutableUpperTriangular{T, N, N2} <: AbstractUpperTriangular{T, N, N2} end
+abstract type MutableLowerTriangular{T, N, N2} <: AbstractLowerTriangular{T, N, N2} end
 
-struct UpperTriangularMatrix{T, N, N2} <: AbstractUpperTriangular{T, N, N2}
+const MutableTriangularMatrix{T,N,N2} = Union{MutableUpperTriangular{T, N, N2}, MutableLowerTriangular{T, N, N2}}
+
+struct StaticUpperTriangularMatrix{T, N, N2} <: AbstractUpperTriangular{T, N, N2}
     data::NTuple{N2,T}
 end
-struct LowerTriangularMatrix{T, N, N2} <: AbstractLowerTriangular{T, N, N2}
+struct StaticLowerTriangularMatrix{T, N, N2} <: AbstractLowerTriangular{T, N, N2}
     data::NTuple{N2,T}
 end
-struct UpperTriangularMMatrix{T, N, N2} <: AbstractUpperTriangular{T, N, N2}
+struct UpperTriangularMatrix{T, N, N2} <: MutableUpperTriangular{T, N, N2}
     data::Base.RefValue{NTuple{N2,T}}
-    function UpperTriangularMMatrix{T, N, N2}(d::Base.RefValue{NTuple{N2,T}}) where {T,N,N2}
+    function UpperTriangularMatrix{T, N, N2}(d::Base.RefValue{NTuple{N2,T}}) where {T,N,N2}
         isbits(T) || error("Can only construct mutable isbits matrices.")
         new{T,N,N2}(d)
     end
 end
-struct LowerTriangularMMatrix{T, N, N2} <: AbstractLowerTriangular{T, N, N2}
+struct LowerTriangularMatrix{T, N, N2} <: MutableLowerTriangular{T, N, N2}
     data::Base.RefValue{NTuple{N2,T}}
-    function LowerTriangularMMatrix{T, N, N2}(d::Base.RefValue{NTuple{N2,T}}) where {T,N,N2}
+    function LowerTriangularMatrix{T, N, N2}(d::Base.RefValue{NTuple{N2,T}}) where {T,N,N2}
         isbits(T) || error("Can only construct mutable isbits matrices.")
         new{T,N,N2}(d)
     end
 end
-Base.size(::TriangularMatrix{T,N}) where {T,N} = (N,N)
+struct PointerUpperTriangularMatrix{T, N, N2} <: MutableUpperTriangular{T, N, N2}
+    data::Ptr{T}
+end
+struct PointerLowerTriangularMatrix{T, N, N2} <: MutableLowerTriangular{T, N, N2}
+    data::Ptr{T}
+end
+Base.size(::AbstractTriangularMatrix{T,N}) where {T,N} = (N,N)
 
-function upper_triangle_quote(N, ::Type{T}) where T
+function upper_triangle_quote(N, S = :A)
     N2 = big_triangle(N)
     q = quote
         @inbounds begin
         end
     end
-    @static if VERSION > v"0.6.9"
+    @static if VERSION > v"0.7-"
         qa = q.args[2].args[3].args
     else
         qa = q.args[2].args[2].args
@@ -45,29 +55,67 @@ function upper_triangle_quote(N, ::Type{T}) where T
     ind = 0
     for i ∈ 1:N, j ∈ 1:i
         ind += 1
-        A_i = Symbol(:A_, ind)
-        push!(qa, :( $A_i = A[$j,$i] ) )
+        A_i = Symbol(S, :_, ind)
+        push!(qa, :( $A_i = $(S)[$j,$i] ) )
     end
     q, N2
 end
-function lower_triangle_quote(N, ::Type{T}) where T
+function lower_triangle_quote(N, S = :A)
     N2 = big_triangle(N)
     q = quote
         @inbounds begin
         end
     end
-    @static if VERSION > v"0.6.9"
+    @static if VERSION > v"0.7-"
         qa = q.args[2].args[3].args
     else
         qa = q.args[2].args[2].args
     end
     for i ∈ 1:N, j ∈ i:N
-        A_i = Symbol(:A_, small_triangle(j)+i )
-        push!(qa, :( $A_i = A[$j,$i] ) )
+        A_i = Symbol(S, :_, small_triangle(j)+i )
+        push!(qa, :( $A_i = $(S)[$j,$i] ) )
     end
     push!(q.args, :($M{$T,$N,$N2}( @ntuple $N2 A )))
     q, N2
 end
+
+function recursive_lower_triangle_quote!(qa, N, ::Type{T}) where T
+
+end
+
+# function recursive_upper_triangle_quote(N, S = :S, ::Type{T} = Float64) where T
+#     N2 = big_triangle(N)
+#     q = quote
+#         @inbounds begin
+#             data = Ref{NTuple{$N2,$T}}()
+#             ptr = point(data)
+#             ind = 0
+#         end
+#     end
+#     @static if VERSION > v"0.7-"
+#         qa = q.args[2].args[3].args
+#     else
+#         qa = q.args[2].args[2].args
+#     end
+
+
+# end
+# function recursive_lower_triangle_quote(N, S, ::Type{T} = Float64) where T
+#     N2 = big_triangle(N)
+#     q = quote
+#         @inbounds begin
+#             data = Ref{NTuple{$N2,$T}}()
+#             ptr = point(data)
+#             ind = 0
+#         end
+#     end
+#     @static if VERSION > v"0.7-"
+#         qa = q.args[2].args[3].args
+#     else
+#         qa = q.args[2].args[2].args
+#     end
+
+# end
 function UpperTriangularMatrix(A::AbstractMatrix)
     m, n = size(A)
     @assert m == n
@@ -163,7 +211,7 @@ end
     end
     # @inbounds out = A.data[][small_triangle(j)+i]
     # out
-    unsafe_load(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), small_triangle(j)+i)
+    unsafe_load(point(A), small_triangle(j)+i)
 end
 @inline function Base.getindex(A::LowerTriangularMMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
     @boundscheck begin
@@ -188,7 +236,7 @@ end
             throw("Cannot set index within lower triangular of UpperTriangularMatrix.")
         end
     end
-    unsafe_store!(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), convert(T, val), small_triangle(j)+i)
+    unsafe_store!(point(A), convert(T, val), small_triangle(j)+i)
     return val
 end
 @inline function Base.setindex!(A::LowerTriangularMMatrix{T,N,N2}, val, i::Integer, j::Integer) where  {T,N,N2}
@@ -198,7 +246,7 @@ end
             throw("Cannot set index within upper triangular of LowerTriangularMatrix.")
         end
     end
-    unsafe_store!(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), convert(T, val), small_triangle(i)+j)
+    unsafe_store!(point(A), convert(T, val), small_triangle(i)+j)
     return val
 end
 
