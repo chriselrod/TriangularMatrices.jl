@@ -253,7 +253,7 @@ C = A * B
 #     end
 # end
 function mul_quote!(qa, M, N, P, ta=false, A = :A, tb=false, B = :B, tc=false, C = :C,
-                                    extract = extract_symbol, insert = extract_symbol)
+                        extract = extract_symbol, insert = extract_symbol, eq = :(=))
 
     eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
     eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
@@ -262,17 +262,11 @@ function mul_quote!(qa, M, N, P, ta=false, A = :A, tb=false, B = :B, tc=false, C
     N4, Nr = divrem(N, chunk)
     for j = 1:P, i = 1:M
         C_ij = eC(i, j)
-        if Nr > 0
-            push!(qa, :($C_ij = +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:Nr]...) ) )
-            for k = 1:N4
-                push!(qa, :($C_ij = $C_ij +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+Nr+chunk*(k-1):Nr + chunk*k ]...) ) )
-            end
-        else
-            push!(qa, :($C_ij = +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:chunk ]...) ) )
-            for k = 2:N4
-                push!(qa, :($C_ij = $C_ij +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*(k-1):chunk*k ]...) ) )
-            end
+        push!(qa, Expr(eq, C_ij, :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:chunk]...) ) ))
+        for k = 2:N4
+            push!(qa, :($C_ij = $C_ij +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*(k-1):chunk*k ]...) ) )
         end
+        Nr > 0 && push!(qa, :($C_ij = $C_ij +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*k:N ]...) ) )
     end
 end
 # function mul_quotev!(qa, ::Type{T}, M, N, P, ta=n(), A = :A, tb=n(), B = :B, tc=n(), C = :C,
@@ -289,44 +283,44 @@ end
 #             push!(qa, :( $(eC(i, j)) = bv * SVector{$N,$T}( $(Expr(:tuple, [eA(i,n) for n ∈ 1:N]...))  )) )
 #         end
 #     end
+# # end
+# function gemm_quote!(qa, M, N, P, ta=n(), A = :A, tb=n(), B = :B, tc=n(), C = :C, extract = extract_symbol)
+#     # eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
+#     # eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
+#     # eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
+#     # chunk = 4
+#     # N4, Nr = divrem(N, chunk)
+#     # for j = 1:P, i = 1:M
+#     #     C_ij = eC(i, j)
+#     #     if Nr > 0
+#     #         push!(qa, :($C_ij += $( reduce((ex1,ex2) -> :(+($ex1,$ex2)), vcat(
+#     #             [ :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:Nr]...)) ],
+#     #             [ :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+Nr+chunk*(k-1):Nr + chunk*k ]...)) for k = 1:N4 ] )  ) )  )  )
+#     #     else
+#     #         push!(qa, :($C_ij += $( reduce((ex1,ex2) -> :(+($ex1,$ex2)), 
+#     #             [ :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*(k-1):chunk*k ]...)) for k = 1:N4 ] )  ) )  )
+#     #     end
+#     # end
+#     eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
+#     eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
+#     eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
+#     chunk = 4
+#     N4, Nr = divrem(N, chunk)
+#     for j = 1:P, i = 1:M
+#         C_ij = eC(i, j)
+#         if Nr > 0
+#             push!(qa, :($C_ij += +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:Nr]...) ) )
+#             for k = 1:N4
+#                 push!(qa, :($C_ij += +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+Nr+chunk*(k-1):Nr + chunk*k ]...) ) )
+#             end
+#         else
+#             push!(qa, :($C_ij += +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:chunk ]...) ) )
+#             for k = 2:N4
+#                 push!(qa, :($C_ij += +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*(k-1):chunk*k ]...) ) )
+#             end
+#         end
+#     end
 # end
-function gemm_quote!(qa, M, N, P, ta=n(), A = :A, tb=n(), B = :B, tc=n(), C = :C, extract = extract_symbol)
-    # eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
-    # eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
-    # eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
-    # chunk = 4
-    # N4, Nr = divrem(N, chunk)
-    # for j = 1:P, i = 1:M
-    #     C_ij = eC(i, j)
-    #     if Nr > 0
-    #         push!(qa, :($C_ij += $( reduce((ex1,ex2) -> :(+($ex1,$ex2)), vcat(
-    #             [ :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:Nr]...)) ],
-    #             [ :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+Nr+chunk*(k-1):Nr + chunk*k ]...)) for k = 1:N4 ] )  ) )  )  )
-    #     else
-    #         push!(qa, :($C_ij += $( reduce((ex1,ex2) -> :(+($ex1,$ex2)), 
-    #             [ :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*(k-1):chunk*k ]...)) for k = 1:N4 ] )  ) )  )
-    #     end
-    # end
-    eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
-    eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
-    eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
-    chunk = 4
-    N4, Nr = divrem(N, chunk)
-    for j = 1:P, i = 1:M
-        C_ij = eC(i, j)
-        if Nr > 0
-            push!(qa, :($C_ij += +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:Nr]...) ) )
-            for k = 1:N4
-                push!(qa, :($C_ij += +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+Nr+chunk*(k-1):Nr + chunk*k ]...) ) )
-            end
-        else
-            push!(qa, :($C_ij += +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:chunk ]...) ) )
-            for k = 2:N4
-                push!(qa, :($C_ij += +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*(k-1):chunk*k ]...) ) )
-            end
-        end
-    end
-end
 
 # @generated function mul_unrolled_chunks!(::Size{sc}, c::StaticMatrix, ::Size{sa}, ::Size{sb}, a::StaticMatrix, b::StaticMatrix) where {sa, sb, sc}
 #     if sb[1] != sa[2] || sa[1] != sc[1] || sb[2] != sc[2]
@@ -364,6 +358,49 @@ end
 #     end
 # end
 
+function mul_kernel(M, N, P, tA=false, tB=false, tC=false, eq = :(=), LA = M*N, LB = N*P, LC = M*P)
+    q, qa = create_quote()
+    push!(q.args, :(Base.@_inline_meta))
+    extract_linear!(qa, LA, :A)
+    extract_linear!(qa, LB, :B)
+    mul_quote!(qa, M, N, P, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+    insert_linear!(qa, LC, :C)
+    # isa(dummy, Bool) || push!(q.args, :C) # worth considering?
+    push!(q.args, :C)
+    q
+end
+
+function block_kernel(M, N, P, tA=false, tB=false, tC=false, eq = :(=), LA = M*N, LB = N*P, LC = M*P)
+    A_min_dim, A_max_dim = minmax(M,N)
+    B_min_dim, B_max_dim = minmax(N,P)
+    if (√2 * A_min_dim < A_max_dim) && (√2 * B_min_dim < B_max_dim) #Both matrices are divided into four blocks.
+
+    elseif
+
+    end
+
+end
+function blockmull4x4()
+
+
+end
+function blockmull2x4()
+
+
+end
+function blockmull4x2()
+
+
+end
+function blockmull2x2_out1()
+
+
+end
+function blockmull2x2_out4()
+
+
+end
+
 
 """
 The dummy argument always gets optimized out.
@@ -374,17 +411,21 @@ Maybe there is a solution that is less of a hack, but just passing an extra dumm
                         A::RecursiveMatrixOrTranpose{T,M,N,LA},
                         B::RecursiveMatrixOrTranpose{T,N,P,LB},
                         dummy = Nothing) where {T,M,N,P,LA,LB,LC}
-    q, qa = create_quote()
-    push!(q.args, :(Base.@_inline_meta))
-    extract_linear!(qa, LA, :A)
-    extract_linear!(qa, LB, :B)
-    mul_quote!(qa, M, N, P, istransposed(A), :A, istransposed(B), :B, istransposed(C), :C, id_symbol, id_symbol)
-    insert_linear!(qa, LC, :C)
-    # isa(dummy, Bool) || push!(q.args, :C) # worth considering?
-    push!(q.args, :C)
-    q
+    if max(M,N,P) < cutoff # No recursion; we multiply.
+        return mul_kernel(M, N, P, istransposed(A), istransposed(B), istransposed(C))
+    else # Recursion.
+        return block_kernel(M,N,P, istransposed(A), istransposed(B), istransposed(C))
+    end
 end
 
+"""
+By default, Julia refuses to emit SIMD instructions where aliasing is possible.
+However, the pointer matrices are only used internally where I can guarantee that they wont alias.
+
+Unlike C/C++, which have `restrict` compiler hints (or Fortran which simply assumes you aren't aliasing),
+there's no way for us to make that promise to the compiler. So, instead, the approach is to use `code_llvm`
+for the corresponding types where aliasing isn't possible, and then use this code with `llvmcall`.
+"""
 @generated function mul!(C::RecursivePointerMatrixOrTranpose{T,M,P,LC},
                         A::RecursivePointerMatrixOrTranpose{T,M,N,LA},
                         B::RecursivePointerMatrixOrTranpose{T,N,P,LB},
@@ -403,14 +444,11 @@ end
                         A::RecursiveMatrixOrTranpose{T,M,N,LA},
                         B::RecursiveMatrixOrTranpose{T,N,P,LB},
                         dummy = Nothing) where {T,M,N,P,LA,LB,LC}
-    q, qa = create_quote()
-    push!(q.args, :(Base.@_inline_meta))
-    extract_linear!(qa, LA, :A)
-    extract_linear!(qa, LB, :B)
-    gemm_quote!(qa, M, N, P, istransposed(A), :A, istransposed(B), :B, istransposed(C), :C, id_symbol, id_symbol)
-    insert_linear!(qa, LC, :C)
-    push!(q.args, :C)
-    q
+    if M*N < abs2(cutoff) && N*P < abs2(cutoff) # No recursion; we multiply.
+        return mul_kernel(M, N, P, istransposed(A), istransposed(B), istransposed(C), :(+=) )
+    else # Recursion.
+        return block_kernel(M,N,P, istransposed(A), istransposed(B), istransposed(C), :(+=) )
+    end
 end
 @generated function gemm!(C::RecursivePointerMatrixOrTranpose{T,M,P,LC},
                         A::RecursivePointerMatrixOrTranpose{T,M,N,LA},

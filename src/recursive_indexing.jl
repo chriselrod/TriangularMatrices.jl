@@ -65,8 +65,8 @@ end
 function dense_sub2ind(dims::NTuple{2}, i, j, offset = 0, joffset = 1)
     M, N = dims
     minind, maxind = minmax(M, N)
-    maxind*minind < abs2(cutoff) && return (j-joffset)*M + i + offset
-    if √2*minind > maxind #divide both
+    maxind < cutoff && return (j-joffset)*M + i + offset
+    if √2*minind > maxind && minind > cutoff #divide both
         Mh, Mr = divrem(M, 2)
         Nh, Nr = divrem(N, 2)
         Mh_p_Mr = Mh + Mr
@@ -100,9 +100,9 @@ function dense_sub2ind(dims::NTuple{2}, i, j, offset = 0, joffset = 1)
 end
 function dense_sub2ind_quote(M, N, offset = 0, joffset = 1)
     minind, maxind = minmax(M, N)
-    maxind*minind < abs2(cutoff) && return :( (j-$joffset ) * $M + i + $offset )
+    maxind < cutoff && return :( (j-$joffset ) * $M + i + $offset )
     
-    if √2*minind > maxind # we divide the matrix into four blocks.
+    if √2*minind > maxind && minind > cutoff # we divide the matrix into four blocks.
         Mh, Mr = divrem(M, 2)
         Nh, Nr = divrem(N, 2)
         Mh_p_Mr = Mh + Mr
@@ -136,6 +136,12 @@ function dense_sub2ind_quote(M, N, offset = 0, joffset = 1)
             end)
     end
 end
+"""
+Cartesian indexing isn't recomended, but it is convenient for printing.
+The approach for sub2ind here incurs branches, which would disable SIMD.
+Therefore, Cartesian indexing is strongly discouraged for hot loops.
+Still, it is reasonably fast -- only a handful of ns.
+"""
 @generated dense_sub2ind(::Val{M}, ::Val{N}, i, j) where {M,N} = dense_sub2ind_quote(M, N)
 
 function triangle_sub2ind(N, i, j, offset = 0, joffset = 1)

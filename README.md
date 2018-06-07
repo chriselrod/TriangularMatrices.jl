@@ -82,47 +82,11 @@ end
 ###
 
 
-function dense_sub2ind(dims::NTuple{2}, i, j, offset = 0, joffset = 1)
-    M, N = dims
-    minind, maxind = minmax(M, N)
-    maxind*minind < abs2(cutoff) && return (j-joffset)*M + i + offset
-    if √2*minind > maxind #divide both
-        Mh, Mr = divrem(M, 2)
-        Nh, Nr = divrem(N, 2)
-        Mh_p_Mr = Mh + Mr
-        Nh_p_Nr = Nh + Nr
-        if i <= Mh_p_Mr && j <= Nh_p_Nr
-            return dense_sub2ind( (Mh_p_Mr, Nh_p_Nr), i, j, offset, joffset )
-        elseif j <= Nh_p_Nr
-            return dense_sub2ind( (Mh, Nh_p_Nr), i, j, offset + Mh_p_Mr * (Nh_p_Nr-1), joffset )
-        elseif i <= Mh_p_Mr
-            return dense_sub2ind( (Mh_p_Mr, Nh), i, j, offset + M * Nh_p_Nr, joffset + Nh_p_Nr )
-        else
-            return dense_sub2ind( (Mh, Nh), i, j, offset + M * Nh_p_Nr + Mh_p_Mr * (Nh-1), joffset + Nh_p_Nr )
-        end
-    elseif M > N #divide M
-        Mh, Mr = divrem(M, 2)
-        Mh_p_Mr = Mh + Mr
-        if i < Mh_p_Mr
-            return dense_sub2ind( (Mh_p_Mr, N), i, j, offset, joffset)
-        else
-            return dense_sub2ind( (Mh, N), i, j, offset + Mh_p_Mr * (N-1), joffset)
-        end
-    else #divide N
-        Nh, Nr = divrem(N, 2)
-        Nh_p_Nr = Nh + Nr
-        if j < Nh_p_Nr
-            return dense_sub2ind( (M, Nh_p_Nr), i, j, offset, joffset)
-        else
-            return dense_sub2ind( (M, Nh), i, j, offset + M * Nh_p_Nr, joffset + Nh_p_Nr)
-        end
-    end
-end
 function dense_sub2ind_quote(M, N, offset = 0, joffset = 1)
     minind, maxind = minmax(M, N)
-    maxind*minind < abs2(cutoff) && return :( (j-$joffset ) * $M + i + $offset )
+    maxind < cutoff && return :( (j-$joffset ) * $M + i + $offset )
     
-    if √2*minind > maxind # we divide the matrix into four blocks.
+    if √2*minind > maxind && minind > cutoff # we divide the matrix into four blocks.
         Mh, Mr = divrem(M, 2)
         Nh, Nr = divrem(N, 2)
         Mh_p_Mr = Mh + Mr
@@ -156,6 +120,13 @@ function dense_sub2ind_quote(M, N, offset = 0, joffset = 1)
             end)
     end
 end
+
+"""
+Cartesian indexing isn't recomended, but it is convenient for printing.
+The approach for sub2ind here incurs branches, which would disable SIMD.
+Therefore, Cartesian indexing is strongly discouraged for hot loops.
+Still, it is reasonably fast -- only a handful of ns.
+"""
 @generated dense_sub2ind(::Val{M}, ::Val{N}, i, j) where {M,N} = dense_sub2ind_quote(M, N)
 
 
@@ -309,9 +280,12 @@ end
 ### from src/arithmetic/gemm.jl
 ###
 
-
+"""
+Use `q, qa = create_quote(); mul_quote!(qa, M, N, P); q` to get an idea of what the
+generated Julia code looks like.
+"""
 function mul_quote!(qa, M, N, P, ta=false, A = :A, tb=false, B = :B, tc=false, C = :C,
-                                    extract = extract_symbol, insert = extract_symbol)
+                        extract = extract_symbol, insert = extract_symbol, eq = :(=))
 
     eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
     eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
@@ -320,34 +294,31 @@ function mul_quote!(qa, M, N, P, ta=false, A = :A, tb=false, B = :B, tc=false, C
     N4, Nr = divrem(N, chunk)
     for j = 1:P, i = 1:M
         C_ij = eC(i, j)
-        if Nr > 0
-            push!(qa, :($C_ij = +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:Nr]...) ) )
-            for k = 1:N4
-                push!(qa, :($C_ij = $C_ij +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+Nr+chunk*(k-1):Nr + chunk*k ]...) ) )
-            end
-        else
-            push!(qa, :($C_ij = +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:chunk ]...) ) )
-            for k = 2:N4
-                push!(qa, :($C_ij = $C_ij +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*(k-1):chunk*k ]...) ) )
-            end
+        push!(qa, Expr(eq, C_ij, :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:chunk]...) ) ))
+        for k = 2:N4
+            push!(qa, :($C_ij = $C_ij +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*(k-1):chunk*k ]...) ) )
         end
+        Nr > 0 && push!(qa, :($C_ij = $C_ij +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*k:N ]...) ) )
     end
 end
 
+function mul_kernel(M, N, P, tA=false, tB=false, tC=false, eq = :(=), LA = M*N, LB = N*P, LC = M*P)
+    q, qa = create_quote()
+    push!(q.args, :(Base.@_inline_meta))
+    extract_linear!(qa, LA, :A)
+    extract_linear!(qa, LB, :B)
+    mul_quote!(qa, M, N, P, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+    insert_linear!(qa, LC, :C)
+    # isa(dummy, Bool) || push!(q.args, :C) # worth considering?
+    push!(q.args, :C)
+    q
+end
 
 @generated function mul!(C::RecursiveMatrixOrTranpose{T,M,P,LC},
                         A::RecursiveMatrixOrTranpose{T,M,N,LA},
                         B::RecursiveMatrixOrTranpose{T,N,P,LB},
                         dummy = Nothing) where {T,M,N,P,LA,LB,LC}
-    q, qa = create_quote()
-    push!(q.args, :(Base.@_inline_meta))
-    extract_linear!(qa, LA, :A)
-    extract_linear!(qa, LB, :B)
-    mul_quote!(qa, M, N, P, istransposed(A), :A, istransposed(B), :B, istransposed(C), :C, id_symbol, id_symbol)
-    insert_linear!(qa, LC, :C)
-    # isa(dummy, Bool) || push!(q.args, :C) # worth considering?
-    push!(q.args, :C)
-    q
+    mul_kernel(M, N, P, istransposed(A), istransposed(B), istransposed(C))
 end
 
 """
