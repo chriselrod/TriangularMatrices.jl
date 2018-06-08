@@ -7,251 +7,6 @@ C: M x P
 C = A * B
 """
 
-# function simd_mul_quote!(qa, ::Type{T}, M, N, P, ta=n(), A = :A, tb=n(), B = :B, tc=n(), C = :C, extract = extract_symbol, insert = extract_symbol) where T
-#     eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
-#     eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
-#     eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
-#     chunk = 64 ÷ sizeof(T)
-#     N4, Nr = divrem(N, chunk)
-#     if Nr == 0
-#         Nt = N4
-#     else
-#         Nt = N4+1
-#     end
-
-#     # for m = 1:M
-#     #     for s = 1:N4
-#     #         push!(qa, :( $(Symbol(A, :_simd, s, :_, m))  = Vec{$chunk,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*(s-1):chunk*s ]... )) ) ))
-#     #     end
-#     #     Nr == 0 || push!(qa, :( $(Symbol(A, :_simd, N4+1, :_, m))  = Vec{$Nr,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*N4:N ]... )) ) ))
-#     # end
-
-#     j = 1
-#     for s = 1:N4
-#         push!(qa, :( $(Symbol(B, :_simd, s))  = Vec{$chunk,$T}( $(Expr(:tuple, [eB(i,j) for i = 1+chunk*(s-1):chunk*s ]... )) ) ))
-#     end
-#     Nr == 0 || push!(qa, :( $(Symbol(B, :_simd, N4+1))  = Vec{$Nr,$T}( $(Expr(:tuple, [eB(i,j) for i = 1+chunk*N4:N ]... )) ) ))
-#     for m = 1:M
-#         for s = 1:N4
-#             push!(qa, :( $(Symbol(A, :_simd, s, :_, m))  = Vec{$chunk,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*(s-1):chunk*s ]... )) ) ))
-#         end
-#         Nr == 0 || push!(qa, :( $(Symbol(A, :_simd, N4+1, :_, m))  = Vec{$Nr,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*N4:N ]... )) ) ))
-#         if Nt == 1
-#             push!(qa, :( $(eC(m, j)) =  sum( $(Symbol(A, :_simd, 1, :_, m)) * $(Symbol(B, :_simd, 1))  ) )   )
-#         else
-#             push!(qa, :( $(eC(m, j)) =  +$( [ :(sum( $(Symbol(A, :_simd, s, :_, m)) * $(Symbol(B, :_simd, s))  ) ) for s = 1:Nt]... )  ) )
-#         end
-#     end
-
-#     for j = 2:P
-#         for s = 1:N4
-#             # @show j, s
-#             # expr = Expr(:tuple, [eB(i,j) for i = 1+chunk*(s-1):chunk*s ]... )
-#             # @show expr
-#             push!(qa, :( $(Symbol(B, :_simd, s))  = Vec{$chunk,$T}( $(Expr(:tuple, [eB(i,j) for i = 1+chunk*(s-1):chunk*s ]... )) ) ))
-# #            @show qa[end]
-#         end
-#         Nr == 0 || push!(qa, :( $(Symbol(B, :_simd, N4+1))  = Vec{$Nr,$T}( $(Expr(:tuple, [eB(i,j) for i = 1+chunk*N4:N ]... )) ) ))
-#         for m = 1:M
-#             if Nt == 1
-#                 push!(qa, :( $(eC(m, j)) =  sum( $(Symbol(A, :_simd, 1, :_, m)) * $(Symbol(B, :_simd, 1))  ) )   )
-#             else
-#                 push!(qa, :( $(eC(m, j)) =  +$( [ :(sum( $(Symbol(A, :_simd, s, :_, m)) * $(Symbol(B, :_simd, s))  ) ) for s = 1:Nt]... )  ) )
-#             end
-#         end
-#     end
-# end
-# function simd_mul_quote!(qa, ::Type{T}, M, N, P, ta, A, tb::n, B = :B, tc=n(), C = :C) where T
-#     eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
-#     eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
-#     eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
-#     chunk = 32 ÷ sizeof(T)
-#     N4, Nr = divrem(N, chunk)
-#     if Nr == 0
-#         Nt = N4
-#     else
-#         Nt = N4+1
-#     end
-
-#     # for m = 1:M
-#     #     for s = 1:N4
-#     #         push!(qa, :( $(Symbol(A, :_simd, s, :_, m))  = Vec{$chunk,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*(s-1):chunk*s ]... )) ) ))
-#     #     end
-#     #     Nr == 0 || push!(qa, :( $(Symbol(A, :_simd, N4+1, :_, m))  = Vec{$Nr,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*N4:N ]... )) ) ))
-#     # end
-
-#     j = 1
-#     for s = 0:N4-1
-#         push!(qa, :( $(Symbol(B, :_simd, s+1))  =  $B[$(1+chunk*s), Vec{$chunk,$T}]) )
-#     end
-#     Nr == 0 || push!(qa, :( $(Symbol(B, :_simd, N4+1))  =  $B[$(1+chunk*N4), Vec{$Nr,$T}] ))
-#     for m = 1:M
-#         for s = 1:N4
-#             push!(qa, :( $(Symbol(A, :_simd, s, :_, m))  = Vec{$chunk,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*(s-1):chunk*s ]... )) ) ))
-#         end
-#         Nr == 0 || push!(qa, :( $(Symbol(A, :_simd, N4+1, :_, m))  = Vec{$Nr,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*N4:N ]... )) ) ))
-#         if Nt == 1
-#             push!(qa, :( $(eC(m, j)) =  sum( $(Symbol(A, :_simd, 1, :_, m)) * $(Symbol(B, :_simd, 1))  ) )   )
-#         else
-#             push!(qa, :( $(eC(m, j)) =  +$( [ :(sum( $(Symbol(A, :_simd, s, :_, m)) * $(Symbol(B, :_simd, s))  ) ) for s = 1:Nt]... )  ) )
-#         end
-#     end
-
-#     for j = 2:P
-#         for s = 0:N4-1
-#             # @show j, s
-#             # expr = Expr(:tuple, [eB(i,j) for i = 1+chunk*(s-1):chunk*s ]... )
-#             # @show expr
-#             push!(qa, :( $(Symbol(B, :_simd, s+1))  = Vec{$chunk,$T}( $B[$(1+chunk*s), Val{$chunk}()]) ))
-# #            @show qa[end]
-#         end
-#         Nr == 0 || push!(qa, :( $(Symbol(B, :_simd, N4+1))  = Vec{$Nr,$T}( $B[$(1+chunk*N4), Val{$Nr}()])  ))
-#         for m = 1:M
-#             if Nt == 1
-#                 push!(qa, :( $(eC(m, j)) =  sum( $(Symbol(A, :_simd, 1, :_, m)) * $(Symbol(B, :_simd, 1))  ) )   )
-#             else
-#                 push!(qa, :( $(eC(m, j)) =  +$( [ :(sum( $(Symbol(A, :_simd, s, :_, m)) * $(Symbol(B, :_simd, s))  ) ) for s = 1:Nt]... )  ) )
-#             end
-#         end
-#     end
-# end
-
-# function svec_mul_quote!(qa, ::Type{T}, M, N, P, ta=n(), A = :A, tb=n(), B = :B, tc=n(), C = :C, extract = extract_symbol, insert = extract_symbol) where T
-#     eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
-#     eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
-#     eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
-#     chunk = 64 ÷ sizeof(T)
-#     N4, Nr = divrem(N, chunk)
-#     if Nr == 0
-#         Nt = N4
-#     else
-#         Nt = N4+1
-#     end
-
-#     for m = 1:M
-#         for s = 1:N4
-#             push!(qa, :( $(Symbol(A, :_simd, s, :_, m))  = SVector{$chunk,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*(s-1):chunk*s ]... )) )' ))
-#         end
-#         Nr == 0 || push!(qa, :( $(Symbol(A, :_simd, N4+1, :_, m))  = SVector{$Nr,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*N4:N ]... )) )' ))
-#     end
-
-#     # j = 1
-#     # for s = 1:N4
-#     #     push!(qa, :( $(Symbol(B, :_simd, s))  = SVector{$chunk,$T}( $(Expr(:tuple, [eB(i,j) for i = 1+chunk*(s-1):chunk*s ]... )) ) ))
-#     # end
-#     # Nr == 0 || push!(qa, :( $(Symbol(B, :_simd, N4+1))  = SVector{$Nr,$T}( $(Expr(:tuple, [eB(i,j) for i = 1+chunk*N4:N ]... )) ) ))
-#     # for m = 1:M
-#     #     for s = 1:N4
-#     #         push!(qa, :( $(Symbol(A, :_simd, s, :_, m))  = SVector{$chunk,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*(s-1):chunk*s ]... )) )' ))
-#     #     end
-#     #     Nr == 0 || push!(qa, :( $(Symbol(A, :_simd, N4+1, :_, m))  = SVector{$Nr,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*N4:N ]... )) )' ))
-#     #     if Nt == 1
-#     #         push!(qa, :( $(eC(m, j)) =  $(Symbol(A, :_simd, 1, :_, m)) * $(Symbol(B, :_simd, 1))  )   )
-#     #     else
-#     #         push!(qa, :( $(eC(m, j)) =  +$( [ :( $(Symbol(A, :_simd, s, :_, m)) * $(Symbol(B, :_simd, s))  ) for s = 1:Nt]... )  ) )
-#     #     end
-#     # end
-
-#     for j = 1:P
-#         for s = 1:N4
-#             # @show j, s
-#             # expr = Expr(:tuple, [eB(i,j) for i = 1+chunk*(s-1):chunk*s ]... )
-#             # @show expr
-#             push!(qa, :( $(Symbol(B, :_simd, s))  =  B[$(1+chunk*(s-1)), SVector{$chunk,$T}] ))
-# #            @show qa[end]
-#         end
-#         Nr == 0 || push!(qa, :( $(Symbol(B, :_simd, N4+1))  = SVector{$Nr,$T}( $(Expr(:tuple, [eB(i,j) for i = 1+chunk*N4:N ]... )) ) ))
-#         for m = 1:M
-#             if Nt == 1
-#                 push!(qa, :( $(eC(m, j)) =  $(Symbol(A, :_simd, 1, :_, m)) * $(Symbol(B, :_simd, 1))   )   )
-#             else
-#                 push!(qa, :( $(eC(m, j)) =  +$( [ :( $(Symbol(A, :_simd, s, :_, m)) * $(Symbol(B, :_simd, s))   ) for s = 1:Nt]... )  ) )
-#             end
-#         end
-#     end
-# end
-
-# function tup_mul_quote!(qa, ::Type{T}, M, N, P, ta=n(), A = :A, tb=n(), B = :B, tc=n(), C = :C, extract = extract_symbol, insert = extract_symbol) where T
-#     eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
-#     eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
-#     eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
-#     chunk = 64 ÷ sizeof(T)
-#     N4, Nr = divrem(N, chunk)
-#     if Nr == 0
-#         Nt = N4
-#     else
-#         Nt = N4+1
-#     end
-
-#     VT = Base.VecElement{T}
-#     # for m = 1:M
-#     #     for s = 1:N4
-#     #         push!(qa, :( $(Symbol(A, :_simd, s, :_, m))  = Vec{$chunk,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*(s-1):chunk*s ]... )) ) ))
-#     #     end
-#     #     Nr == 0 || push!(qa, :( $(Symbol(A, :_simd, N4+1, :_, m))  = Vec{$Nr,$T}( $(Expr(:tuple, [eA(m,i) for i = 1+chunk*N4:N ]... )) ) ))
-#     # end
-
-#     j = 1
-#     for s = 1:N4
-#         push!(qa, :( ($(Symbol(B, :_simd, s)))::NTuple{$chunk,$VT}  = ($(Expr(:tuple, [ :($VT($(eB(i,j)))) for i = 1+chunk*(s-1):chunk*s ]... )))::NTuple{$chunk,$VT} ) )
-#     end
-#     Nr == 0 || push!(qa, :( ($(Symbol(B, :_simd, N4+1)))::NTuple{$Nr,$VT}  =  ($(Expr(:tuple, [:($VT($(eB(i,j)))) for i = 1+chunk*N4:N ]... )) )::NTuple{$Nr,$VT}) )
-#     for m = 1:M
-#         for s = 1:N4
-#             push!(qa, :( $(Symbol(A, :_simd, s, :_, m))::NTuple{$chunk,$VT}  = ($(Expr(:tuple, [eA(m,i)))) for i = 1+chunk*(s-1):chunk*s ]... )) )::NTuple{$chunk,$VT} ) )
-#         end
-#         Nr == 0 || push!(qa, :( ($(Symbol(A, :_simd, N4+1, :_, m)))::NTuple{$Nr,$VT}  =  ($(Expr(:tuple, [eA(m,i)))) for i = 1+chunk*N4:N ]... )) )::NTuple{$Nr,$VT}) )
-#         if Nt == 1
-#             push!(qa, :( $(eC(m, j)) =  sum( $(Symbol(A, :_simd, 1, :_, m)) .* $(Symbol(B, :_simd, 1))  ) )   )
-#         else
-#             push!(qa, :( $(eC(m, j)) =  +$( [ :(sum( $(Symbol(A, :_simd, s, :_, m)) .* $(Symbol(B, :_simd, s))  ) ) for s = 1:Nt]... )  ) )
-#         end
-#     end
-
-#     for j = 2:P
-#         for s = 1:N4
-#             # @show j, s
-#             # expr = Expr(:tuple, [eB(i,j) for i = 1+chunk*(s-1):chunk*s ]... )
-#             # @show expr
-#             push!(qa, :( $(Symbol(B, :_simd, s))  = $(Expr(:tuple, [eB(i,j)))) for i = 1+chunk*(s-1):chunk*s ]... )) ) )
-# #            @show qa[end]
-#         end
-#         Nr == 0 || push!(qa, :( $(Symbol(B, :_simd, N4+1))  =  $(Expr(:tuple, [eB(i,j)))) for i = 1+chunk*N4:N ]... )) ) )
-#         for m = 1:M
-#             if Nt == 1
-#                 push!(qa, :( $(eC(m, j)) =  sum( $(Symbol(A, :_simd, 1, :_, m)) .* $(Symbol(B, :_simd, 1))  ) )   )
-#             else
-#                 push!(qa, :( $(eC(m, j)) =  +$( [ :(sum( $(Symbol(A, :_simd, s, :_, m)) .* $(Symbol(B, :_simd, s))  ) ) for s = 1:Nt]... )  ) )
-#             end
-#         end
-#     end
-# end
-# function chunk_mul_quote!(qa, M, N, P, ta=n(), A = :A, tb=n(), B = :B, tc=n(), C = :C, extract = extract_symbol, insert = extract_symbol)
-#     eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
-#     eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
-#     eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
-#     chunk = 4
-#     N4, Nr = divrem(N, chunk)
-#     for j = 1:P, i = 1:M
-#         C_ij = eC(i, j)
-#         if Nr > 0
-#             push!(qa, :($C_ij = $( reduce((ex1,ex2) -> :(+($ex1,$ex2)), vcat(
-#                 [ :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:Nr]...)) ],
-#                 [ :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+Nr+chunk*(k-1):Nr + chunk*k ]...)) for k = 1:N4 ] )  ) )  )  )
-#         else
-#             push!(qa, :($C_ij = $( reduce((ex1,ex2) -> :(+($ex1,$ex2)), 
-#                 [ :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*(k-1):chunk*k ]...)) for k = 1:N4 ] )  ) )  )
-#         end
-#     end
-# end
-# function mul_quote!(qa, M, N, P, ta=n(), A = :A, tb=n(), B = :B, tc=n(), C = :C, extract = extract_symbol, insert = extract_symbol)
-#     eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
-#     eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
-#     eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
-#     for j = 1:P, i = 1:M
-#         push!(qa, :( $(eC(i, j)) = $(reduce((ex1,ex2) -> :(+($ex1,$ex2)), [ :( $(eA(i,k))*$(eB(k,j)) ) for k = 1:N ] )) ) )
-#     end
-# end
 function mul_quote!(qa, M, N, P, ta=false, A = :A, tb=false, B = :B, tc=false, C = :C,
                         extract = extract_symbol, insert = extract_symbol, eq = :(=))
 
@@ -269,95 +24,6 @@ function mul_quote!(qa, M, N, P, ta=false, A = :A, tb=false, B = :B, tc=false, C
         Nr > 0 && push!(qa, :($C_ij = $C_ij +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*k:N ]...) ) )
     end
 end
-# function mul_quotev!(qa, ::Type{T}, M, N, P, ta=n(), A = :A, tb=n(), B = :B, tc=n(), C = :C,
-#             extractA = extract_symbol, extractB = extract_symbol, insert = extract_symbol) where T
-#     eA = (i,j) -> extractA(A, sub2ind(ta, (M, N), i, j))
-#     eB = (i,j) -> extractB(B, sub2ind(tb, (N, P), i, j))
-#     eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
-#     # chunk = 4
-#     # N4, Nr = divrem(N, chunk)
-#     for j = 1:P
-#         push!(qa, :( bv = SVector{$N,$T}( $(Expr(:tuple, [eB(n,j) for n ∈ 1:N]...)) )' ))
-#         for i = 1:M
-#             C_ij = eC(i, j)
-#             push!(qa, :( $(eC(i, j)) = bv * SVector{$N,$T}( $(Expr(:tuple, [eA(i,n) for n ∈ 1:N]...))  )) )
-#         end
-#     end
-# # end
-# function gemm_quote!(qa, M, N, P, ta=n(), A = :A, tb=n(), B = :B, tc=n(), C = :C, extract = extract_symbol)
-#     # eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
-#     # eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
-#     # eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
-#     # chunk = 4
-#     # N4, Nr = divrem(N, chunk)
-#     # for j = 1:P, i = 1:M
-#     #     C_ij = eC(i, j)
-#     #     if Nr > 0
-#     #         push!(qa, :($C_ij += $( reduce((ex1,ex2) -> :(+($ex1,$ex2)), vcat(
-#     #             [ :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:Nr]...)) ],
-#     #             [ :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+Nr+chunk*(k-1):Nr + chunk*k ]...)) for k = 1:N4 ] )  ) )  )  )
-#     #     else
-#     #         push!(qa, :($C_ij += $( reduce((ex1,ex2) -> :(+($ex1,$ex2)), 
-#     #             [ :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*(k-1):chunk*k ]...)) for k = 1:N4 ] )  ) )  )
-#     #     end
-#     # end
-#     eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
-#     eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
-#     eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
-#     chunk = 4
-#     N4, Nr = divrem(N, chunk)
-#     for j = 1:P, i = 1:M
-#         C_ij = eC(i, j)
-#         if Nr > 0
-#             push!(qa, :($C_ij += +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:Nr]...) ) )
-#             for k = 1:N4
-#                 push!(qa, :($C_ij += +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+Nr+chunk*(k-1):Nr + chunk*k ]...) ) )
-#             end
-#         else
-#             push!(qa, :($C_ij += +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:chunk ]...) ) )
-#             for k = 2:N4
-#                 push!(qa, :($C_ij += +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*(k-1):chunk*k ]...) ) )
-#             end
-#         end
-#     end
-# end
-
-# @generated function mul_unrolled_chunks!(::Size{sc}, c::StaticMatrix, ::Size{sa}, ::Size{sb}, a::StaticMatrix, b::StaticMatrix) where {sa, sb, sc}
-#     if sb[1] != sa[2] || sa[1] != sc[1] || sb[2] != sc[2]
-#         throw(DimensionMismatch("Tried to multiply arrays of size $sa and $sb and assign to array of size $sc"))
-#     end
-
-#     #vect_exprs = [:($(Symbol("tmp_$k2")) = partly_unrolled_multiply(A, B[:, $k2])) for k2 = 1:sB[2]]
-
-#     # Do a custom b[:, k2] to return a SVector (an isbits type) rather than a mutable type. Avoids allocation == faster
-#     tmp_type = SVector{sb[1], eltype(c)}
-#     vect_exprs = [:($(Symbol("tmp_$k2")) = partly_unrolled_multiply($(Size(sa)), $(Size(sb[1])), a, $(Expr(:call, tmp_type, [Expr(:ref, :b, LinearIndices(sb)[i, k2]) for i = 1:sb[1]]...)))) for k2 = 1:sb[2]]
-
-#     exprs = [:(c[$(LinearIndices(sc)[k1, k2])] = $(Symbol("tmp_$k2"))[$k1]) for k1 = 1:sa[1], k2 = 1:sb[2]]
-
-#     return quote
-#         @_inline_meta
-#         @inbounds $(Expr(:block, vect_exprs...))
-#         @inbounds $(Expr(:block, exprs...))
-#     end
-# end
-# @generated function partly_unrolled_multiply(::Size{sa}, ::Size{sb}, a::StaticMatrix{<:Any, <:Any, Ta}, b::StaticArray{<:Any, Tb}) where {sa, sb, Ta, Tb}
-#     if sa[2] != sb[1]
-#         throw(DimensionMismatch("Tried to multiply arrays of size $sa and $sb"))
-#     end
-
-#     if sa[2] != 0
-#         exprs = [reduce((ex1,ex2) -> :(+($ex1,$ex2)), [:(a[$(LinearIndices(sa)[k, j])]*b[$j]) for j = 1:sa[2]]) for k = 1:sa[1]]
-#     else
-#         exprs = [:(zero(promote_op(matprod,Ta,Tb))) for k = 1:sa[1]]
-#     end
-
-#     return quote
-#         $(Expr(:meta,:noinline))
-#         @inbounds return SVector(tuple($(exprs...)))
-#     end
-# end
-
 function mul_kernel(M, N, P, tA=false, tB=false, tC=false, eq = :(=), LA = M*N, LB = N*P, LC = M*P)
     q, qa = create_quote()
     push!(q.args, :(Base.@_inline_meta))
@@ -371,14 +37,149 @@ function mul_kernel(M, N, P, tA=false, tB=false, tC=false, eq = :(=), LA = M*N, 
 end
 
 function block_kernel(M, N, P, tA=false, tB=false, tC=false, eq = :(=), LA = M*N, LB = N*P, LC = M*P)
-    A_min_dim, A_max_dim = minmax(M,N)
-    B_min_dim, B_max_dim = minmax(N,P)
-    if (√2 * A_min_dim < A_max_dim) && (√2 * B_min_dim < B_max_dim) #Both matrices are divided into four blocks.
+    q, qa = create_quote()
+    # Because this gets called when max(M,N,P) <= 2cutoff, we go ahead and split all dims > cutoff
+    if M > cutoff && N > cutoff && P > cutoff
+        Mh, Ml = splitint(M)
+        Nh, Nl = splitint(N)
+        Ph, Pl = splitint(P)
+        extract_linear!(qa, Mh*Nh, :A)#, ind_offset = 0, label_offset = 0) #A11
+        extract_linear!(qa, Nh*Ph, :B)#, ind_offset = 0, label_offset = 0) #B11
+        mul_quote!(qa, Mh, Nh, Ph, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
 
-    elseif
+        extract_linear!(qa, Mh*Nl, :A, ifelse(tA, Mh * Nh, M  * Nh) ) #A12
+        extract_linear!(qa, Nl*Ph, :B, ifelse(tB, N  * Ph, Nh * Ph) ) #B21
+        mul_quote!(qa, Mh, Nl, Ph, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, :(+=) )
 
+        insert_linear!(qa, Mh * Ph, :C) # C11
+
+        extract_linear!(qa, Ml*Nl, :A, M*N - Ml*Nl ) #A22
+        mul_quote!(qa, Ml, Nl, Ph, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        extract_linear!(qa, Ml*Nh, :A, ifelse(tA, M  * Nh, Mh * Nh) )  #A21
+        extract_linear!(qa, Nh*Ph, :B)                                 #B11
+        mul_quote!(qa, Ml, Nh, Ph, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, :(+=) )
+
+        insert_linear!(qa, Ml * Ph, :C, ifelse(tC, M  * Ph, Mh * Ph) ) #C21
+
+        extract_linear!(qa, Nh*Pl, :B, ifelse(tB, Nh * Ph, N * Ph))   #B12
+        mul_quote!(qa, Ml, Nh, Pl, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        extract_linear!(qa, Ml*Nl, :A, M*N - Ml*Nl ) #A22
+        extract_linear!(qa, Nl*Pl, :B, N*P - Nl*Pl ) #B22
+        mul_quote!(qa, Ml, Nl, Pl, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, :(+=) )
+
+        insert_linear!(qa, Ml * Pl, :C, M*P - Ml*Pl ) #C22
+
+        extract_linear!(qa, Mh*Nl, :A, ifelse(tA, Mh * Nh, M  * Nh) ) #A12
+        mul_quote!(qa, Mh, Nl, Pl, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        extract_linear!(qa, Mh*Nh, :A ) #A22
+        extract_linear!(qa, Nh*Pl, :B, ifelse(tB,  Nh * Ph, N * Ph)) #B12
+        mul_quote!(qa, Mh, Nh, Pl, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, :(+=) )
+
+        insert_linear!(qa, Mh * Pl, :C, ifelse(tC, Mh * Ph, M  * Ph) ) #C12
+
+    elseif M > cutoff && N > cutoff # don't split P
+        Mh, Ml = splitint(M)
+        Nh, Nl = splitint(N)
+
+        extract_linear!(qa, Mh*Nh, :A)#, ind_offset = 0, label_offset = 0) #A11
+        extract_linear!(qa, Nh*P, :B)#, ind_offset = 0, label_offset = 0) #B11
+        mul_quote!(qa, Mh, Nh, P, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        extract_linear!(qa, Mh*Nl, :A, ifelse(tA, Mh * Nh, M  * Nh) ) #A12
+        extract_linear!(qa, Nl*P, :B, Nh * P ) #B21
+        mul_quote!(qa, Mh, Nl, P, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, :(+=) )
+
+        insert_linear!(qa, Mh * P, :C) # C11
+
+        extract_linear!(qa, Ml*Nl, :A, M*N - Ml*Nl ) #A22
+        mul_quote!(qa, Ml, Nl, P, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        extract_linear!(qa, Ml*Nh, :A, ifelse(tA, M  * Nh, Mh * Nh) )  #A21
+        extract_linear!(qa, Nh*P, :B)                                 #B11
+        mul_quote!(qa, Ml, Nh, P, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, :(+=) )
+
+        insert_linear!(qa, Ml * Ph, :C, ifelse(tC, M  * Ph, Mh * Ph) ) #C21
+    elseif M > cutoff && P > cutoff # don't split N
+        Mh, Ml = splitint(M)
+        Ph, Pl = splitint(P)
+
+        extract_linear!(qa, Mh*N, :A)#, ind_offset = 0, label_offset = 0) #A1
+        extract_linear!(qa, N*Ph, :B)#, ind_offset = 0, label_offset = 0) #B1
+        mul_quote!(qa, Mh, N, Ph, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        insert_linear!(qa, Mh * Ph, :C) # C11
+
+        extract_linear!(qa, Ml*N, :A, Mh * N ) #A2
+        mul_quote!(qa, Ml, N, Ph, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        insert_linear!(qa, Ml * Ph, :C, ifelse(tC, M  * Ph, Mh * Ph) ) #C21
+
+        extract_linear!(qa, N*Pl, :B, N * Ph ) #B2
+        mul_quote!(qa, Ml, N, Pl, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        insert_linear!(qa, Ml * Pl, :C, M*P - Ml*Pl ) #C22
+
+        extract_linear!(qa, Mh*N, :A) #A1
+        mul_quote!(qa, Mh, N, Pl, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        insert_linear!(qa, Mh * Pl, :C, ifelse(tC, Mh * Ph, M  * Ph) ) #C12
+    elseif N > cutoff && P > cutoff # don't split M
+        Nh, Nl = splitint(N)
+        Ph, Pl = splitint(P)
+
+        extract_linear!(qa, M*Nh, :A)#, ind_offset = 0, label_offset = 0) #A1
+        extract_linear!(qa, Nh*Ph, :B)#, ind_offset = 0, label_offset = 0) #B11
+        mul_quote!(qa, M, Nh, Ph, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        extract_linear!(qa, M*Nl, :A, M * Nh ) #A2
+        extract_linear!(qa, Nl*Ph, :B, ifelse(tB, N  * Ph, Nh * Ph) ) #B21
+        mul_quote!(qa, M, Nl, Ph, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, :(+=) )
+
+        insert_linear!(qa, M * Ph, :C) # C11
+
+        extract_linear!(qa, Nl*Pl, :B, N*P - Nl*Pl ) #B22
+        mul_quote!(qa, M, Nl, Pl, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        extract_linear!(qa, M*Nh, :A)
+        extract_linear!(qa, Nh*Pl, :B, ifelse(tB, Nh * Ph, N * Ph)) #B12
+        mul_quote!(qa, M, Nh, Pl, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, :(+=) )
+
+        insert_linear!(qa, M * Pl, :C, M*Ph ) #C2
+
+
+    elseif M > cutoff # only split M
+        Mh, Ml = splitint(M)
+
+        extract_linear!(qa, Mh*N, :A)#, ind_offset = 0, label_offset = 0) #A11
+        extract_linear!(qa, N*P, :B)#, ind_offset = 0, label_offset = 0) #B11
+        mul_quote!(qa, Mh, N, P, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        insert_linear!(qa, Mh * P, :C) # C11
+
+        extract_linear!(qa, Ml*N, :A, Mh*N ) #A2
+        mul_quote!(qa, Ml, N, P, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        insert_linear!(qa, Ml * P, :C, Mh * P ) #C2
+    elseif N > cutoff # only split N
+        Nh, Nl = splitint(N)
+    else # only split P
+        Ph, Pl = splitint(P)
+
+        extract_linear!(qa, M*N, :A)#, ind_offset = 0, label_offset = 0) #A1
+        extract_linear!(qa, N*Ph, :B)#, ind_offset = 0, label_offset = 0) #B11
+        mul_quote!(qa, M, N, Ph, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        insert_linear!(qa, M * Ph, :C) # C11
+
+        extract_linear!(qa, N*Pl, :B, N*Ph ) #B2
+        mul_quote!(qa, M, N, Pl, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
+
+        insert_linear!(qa, M * Pl, :C, M*Ph ) #C2
     end
-
+    q
 end
 function blockmull4x4()
 
@@ -401,6 +202,21 @@ function blockmull2x2_out4()
 
 end
 
+function recursion_mul(M, N, P, tA=false, tB=false, tC=false, eq = :(=), LA = M*N, LB = N*P, LC = M*P)
+
+    A_blocks = block_dim(M, N)
+    B_blocks = block_dim(N, P)
+    while size(A_blocks,2) < size(B_blocks,1) # should be equal, but under certain "pathological" cases they may not be.
+        A_blocks = split_col(A_blocks)
+    end
+    while size(A_blocks,2) > size(B_blocks,1)
+        B_blocks = split_row(B_blocks)
+    end
+    # The matrices should now line up.
+    # Is it possible that they don't?
+    
+end
+
 
 """
 The dummy argument always gets optimized out.
@@ -410,11 +226,15 @@ Maybe there is a solution that is less of a hack, but just passing an extra dumm
 @generated function mul!(C::RecursiveMatrixOrTranpose{T,M,P,LC},
                         A::RecursiveMatrixOrTranpose{T,M,N,LA},
                         B::RecursiveMatrixOrTranpose{T,N,P,LB},
-                        dummy = Nothing) where {T,M,N,P,LA,LB,LC}
-    if max(M,N,P) < cutoff # No recursion; we multiply.
-        return mul_kernel(M, N, P, istransposed(A), istransposed(B), istransposed(C))
-    else # Recursion.
+                        dummy = true) where {T,M,N,P,LA,LB,LC}
+                        #dummy = Nothing) where {T,M,N,P,LA,LB,LC}
+    maxdim = max(M,N,P)
+    if maxdim <= cutoff # No recursion; we multiply.
+        return mul_kernel(M,N,P, istransposed(A), istransposed(B), istransposed(C))
+    elseif maxdim <= 2cutoff
         return block_kernel(M,N,P, istransposed(A), istransposed(B), istransposed(C))
+    else # Recursion.
+        return recursion_mul(M,N,P, istransposed(A), istransposed(B), istransposed(C))
     end
 end
 
@@ -449,6 +269,56 @@ end
     else # Recursion.
         return block_kernel(M,N,P, istransposed(A), istransposed(B), istransposed(C), :(+=) )
     end
+end
+
+const r64_1 = Ref{NTuple{64,Float64}}()
+const r64_2 = Ref{NTuple{64,Float64}}()
+const r64_3 = Ref{NTuple{64,Float64}}()
+
+function create_mul_method(T,M,N,P,LA = M*N,LB = N*P,LC = M*P)
+    iobuffer = IOBuffer()
+    code_llvm(iobuffer, mul!, (RecursiveMatrix{T,M,P,LC}, RecursiveMatrix{T,M,N,LC}, RecursiveMatrix{T,N,P,LC}, Bool))
+    kernel_code = String(iobuffer)
+    codestart = search(kernel_code,"{\ntop:\n ")[end]
+    @eval function mul!(C:: PointerRecursiveMatrix{$T,$M,$P,$LC},
+                        A:: PointerRecursiveMatrix{$T,$M,$N,$LA},
+                        B:: PointerRecursiveMatrix{$T,$N,$P,$LB})
+            # Base.llvmcall($(kernel_code[codestart:end-3]), Base.RefValue{NTuple{$LC,$T}}, Tuple{Base.RefValue{NTuple{$LC,$T}},Base.RefValue{NTuple{$LA,$T}},Base.RefValue{NTuple{$LB,$T}}}, Base.unsafe_convert(Base.RefValue{NTuple{$LC,$T}}, Base.unsafe_convert(Ptr{NTuple{$LC,$T}}, C.data)), Base.unsafe_convert(Base.RefValue{NTuple{$LA,$T}}, Base.unsafe_convert(Ptr{NTuple{$LA,$T}}, A.data)), Base.unsafe_convert(Base.RefValue{NTuple{$LB,$T}}, Base.unsafe_convert(Ptr{NTuple{$LB,$T}}, B.data)))
+            
+            #works, but slow
+            # Base.llvmcall($(kernel_code[codestart:end-3]), Base.RefValue{NTuple{$LC,$T}}, Tuple{Base.RefValue{NTuple{$LC,$T}},Base.RefValue{NTuple{$LA,$T}},Base.RefValue{NTuple{$LB,$T}}}, Ref(Base.unsafe_load(Base.unsafe_convert(Ptr{NTuple{$LC,$T}}, C.data),1)), Ref(Base.unsafe_load(Base.unsafe_convert(Ptr{NTuple{$LA,$T}}, A.data),1)), Ref(Base.unsafe_load(Base.unsafe_convert(Ptr{NTuple{$LB,$T}}, B.data),1)))
+
+            #works, but also pretty slow
+            # r64_1[] = Base.unsafe_load(Base.unsafe_convert(Ptr{NTuple{$LC,$T}}, C.data),1)
+            # r64_2[] = Base.unsafe_load(Base.unsafe_convert(Ptr{NTuple{$LA,$T}}, A.data),1)
+            # r64_3[] = Base.unsafe_load(Base.unsafe_convert(Ptr{NTuple{$LB,$T}}, B.data),1)
+            
+            # Base.llvmcall($(kernel_code[codestart:end-3]), Base.RefValue{NTuple{$LC,$T}}, Tuple{Base.RefValue{NTuple{$LC,$T}},Base.RefValue{NTuple{$LA,$T}},Base.RefValue{NTuple{$LB,$T}}}, r64_1, r64_2, r64_3)
+
+
+            
+            Base.llvmcall($(kernel_code[codestart:end-3]), Ptr{Ptr{Int8}}, Tuple{Ptr{Ptr{Int8}},Ptr{Ptr{Int8}},Ptr{Ptr{Int8}}}, pointer(Base.unsafe_convert(Ptr{Int8}, C.data)), pointer(Base.unsafe_convert(Ptr{Int8}, A.data)), pointer(Base.unsafe_convert(Ptr{Int8}, B.data)))
+            
+            # Base.llvmcall($(kernel_code[codestart:end-3]), Base.RefValue{NTuple{$LC,$T}}, Tuple{Base.RefValue{NTuple{$LC,$T}},Base.RefValue{NTuple{$LA,$T}},Base.RefValue{NTuple{$LB,$T}}}, C.data, A.data, B.data)
+
+            # Base.llvmcall($(kernel_code[codestart:end-3]), Ptr{NTuple{$LC,$T}}, Tuple{Ptr{NTuple{$LC,$T}},Ptr{NTuple{$LA,$T}},Ptr{NTuple{$LB,$T}}}, Base.unsafe_convert(Ptr{NTuple{$LC,$T}}, C.data), Base.unsafe_convert(Ptr{NTuple{$LA,$T}}, A.data), Base.unsafe_convert(Ptr{NTuple{$LB,$T}}, B.data))
+            # Base.llvmcall($(kernel_code[codestart:end-3]), Ptr{$T}, Tuple{Ptr{$T},Ptr{$T},Ptr{$T}}, C.data, A.data, B.data)
+            C
+        end
+
+end
+function create_gemm_method(T,M,N,P,LA = M*N,LB = N*P,LC = M*P)
+    iobuffer = IOBuffer()
+    code_llvm(iobuffer, gemm!, (RecursiveMatrix{T,M,P,LC}, RecursiveMatrix{T,M,N,LC}, RecursiveMatrix{T,N,P,LC}, Bool))
+    kernel_code = String(iobuffer)
+    codestart = search(kernel_code,"{\ntop:\n ")[end]
+    @eval function gemm!(C:: PointerRecursiveMatrix{$T,$M,$P,$LC},
+                        A:: PointerRecursiveMatrix{$T,$M,$N,$LA},
+                        B:: PointerRecursiveMatrix{$T,$N,$P,$LB})
+            Base.llvmcall($(kernel_code[codestart:end-3]), Ptr{NTuple{$LC,$T}}, Tuple{Ptr{NTuple{$LC,$T}},Ptr{NTuple{$LA,$T}},Ptr{NTuple{$LB,$T}}}, Base.unsafe_convert(NTuple{$LC,$T}, C.data), Base.unsafe_convert(NTuple{$LA,$T}, A.data), Base.unsafe_convert(NTuple{$LB,$T}, B.data))
+            C
+        end
+
 end
 @generated function gemm!(C::RecursivePointerMatrixOrTranpose{T,M,P,LC},
                         A::RecursivePointerMatrixOrTranpose{T,M,N,LA},

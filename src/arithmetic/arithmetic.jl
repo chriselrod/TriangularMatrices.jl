@@ -102,44 +102,47 @@ function gen_upper_xtx_quote(T,N,N2)
 end
 
 
-function gen_xxt_quote(T,N,N2)
-    q, qa = initial_quote(N*N2)
-    for i ∈ 1:N2
-        lti = (i-1)*N
+function gen_xxt_quote(T,M,N)
+    N2 = big_triangle(M) #number of elements in output
+    q, qa = initial_quote(M*N)
+    for i ∈ 1:M
+        lti = small_triangle(i)
         for j ∈ 1:i
             B_i = Symbol(:B_, lti + j)
             A1_i = Symbol(:A_, j)
             A2_i = Symbol(:A_, i)
             push!(qa, :($B_i = $A1_i * $A2_i) )
             for k ∈ 1:N-1
-                Nk = N*k
+                Nk = M*k
                 A1_i = Symbol(:A_, Nk + j)
                 A2_i = Symbol(:A_, Nk + i)
                 push!(qa, :($B_i += $A1_i * $A2_i) )
             end
         end
     end
-    push!(q.args, :(SymmetricMatrix{T,N,N2}( ( @ntuple $N2 B ) )))
+    push!(q.args, :(SymmetricMatrix{$T,$M,$N2}( ( @ntuple $N2 B ) )))
     q
 end
-function gen_xtx_quote(T,N,N2)
-    q, qa = initial_quote(N*N2)
-    for i ∈ 1:N2
-        lti = (i-1)*N
+function gen_xtx_quote(T,M,N)
+    N2 = big_triangle(N)
+    q, qa = initial_quote(M*N)
+    for i ∈ 1:N
+        offseti = (i-1)*M
+        lti = small_triangle(i)
         for j ∈ 1:i
-            ltj = (j-1)*N
+            offsetj = (j-1)*M
             B_i = Symbol(:B_, lti + j)
-            A1_i = Symbol(:A_, ltj + 1)
-            A2_i = Symbol(:A_, lti + 1)
+            A1_i = Symbol(:A_, offseti + 1)
+            A2_i = Symbol(:A_, offsetj + 1)
             push!(qa, :($B_i = $A1_i * $A2_i) )
-            for k ∈ 2:N
-                A1_i = Symbol(:A_, ltj + k)
-                A2_i = Symbol(:A_, lti + k)
+            for k ∈ 2:M
+                A1_i = Symbol(:A_, offseti + k)
+                A2_i = Symbol(:A_, offsetj + k)
                 push!(qa, :($B_i += $A1_i * $A2_i) )
             end
         end
     end
-    push!(q.args, :(SymmetricMatrix{T,N,N2}( ( @ntuple $N2 B ) )))
+    push!(q.args, :(SymmetricMatrix{$T,$N,$N2}( ( @ntuple $N2 B ) )))
     q
 end
 
@@ -151,11 +154,11 @@ end
 @generated function xtx(A::UpperTriangularMatrix{T,N,N2}) where {T,N,N2}
     gen_upper_xtx_quote(T,N,N2)
 end
-@generated function xxt(A::SMatrix{N,N2,T}) where {T,N,N2}
-    gen_xxt_quote(T,N,N2)
+@generated function xxt(A::SMatrix{M,N,T}) where {T,M,N}
+    gen_xxt_quote(T,M,N)
 end
-@generated function xtx(A::SMatrix{N,N2,T}) where {T,N,N2}
-    gen_xxt_quote(T,N,N2)
+@generated function xtx(A::SMatrix{M,N,T}) where {T,M,N}
+    gen_xtx_quote(T,M,N)
 end
 
 xxt(A::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = xtx(UpperTriangularMatrix{T,N,N2}(A.data))

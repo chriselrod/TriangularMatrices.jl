@@ -81,7 +81,10 @@
 #     # push!(q.args, U)
 #     qa
 # end
-function gen_ip_chol_quote!(qa,N,N2,U = :U, S = :S, extract = extract_symbol)
+function gen_ip_chol_quote!(qa,::Type{T},N::Int,N2,U = :U, S = :S, extract = extract_symbol) where T
+
+    chunksize = 32 ÷ sizeof(T)
+    # @show qa
 
     for i ∈ 1:N
         lti = small_triangle(i)
@@ -91,11 +94,23 @@ function gen_ip_chol_quote!(qa,N,N2,U = :U, S = :S, extract = extract_symbol)
         if i == 1
             push!(qa, :($Ui_i = sqrt($U_i)))
         else
-            push!(qa, :($Ui_i = $U_i))
-            for j ∈ 1:i - 1
-                Uj_i = extract(U, lti+j)
-                push!(qa, :($Ui_i -= $Uj_i*$Uj_i))
+            nchunks, r = divrem(i-1, chunksize)
+            if r == 0
+                push!(qa, :($Ui_i = $U_i - +$([:( $(extract(U, lti+j)) * $(extract(U, lti+j))) for j ∈ 1:chunksize ]...)  ))
+                for chunk ∈ 2:nchunks
+                    push!(qa, :($Ui_i = $Ui_i - +$([:( $(extract(U, lti+j)) * $(extract(U, lti+j))) for j ∈ 1+(chunk-1)*chunksize:chunk*chunksize ]...)  ))
+                end
+                
+            else
+                push!(qa, :($Ui_i = $U_i - +$([:( $(extract(U, lti+j)) * $(extract(U, lti+j))) for j ∈ 1:r ]...)  ))
+                for chunk ∈ 1:nchunks
+                    push!(qa, :($Ui_i = $Ui_i - +$([:( $(extract(U, lti+j)) * $(extract(U, lti+j))) for j ∈ 1+r+(chunk-1)*chunksize:chunk*chunksize+r ]...)  ))
+                end
             end
+            # for j ∈ 1:i - 1
+            #     Uj_i = extract(U, lti+j)
+            #     push!(qa, :($Ui_i -= $Uj_i*$Uj_i))
+            # end
             push!(qa, :($Ui_i = sqrt($Ui_i)))
         end
 
@@ -107,11 +122,27 @@ function gen_ip_chol_quote!(qa,N,N2,U = :U, S = :S, extract = extract_symbol)
             if i == 1
                 push!(qa, :($Uj_i = $U_i / $Ui_i) )
             else
-                push!(qa, :($Uj_i = $U_i))
-                for k ∈ 1:i - 1
-                    Ujk, Uik = extract(U, ltj+k), extract(U, lti+k)
-                    push!(qa, :($Uj_i -= $Ujk * $Uik))
+
+
+                nchunks, r = divrem(i-1, chunksize)
+                if r == 0
+                    push!(qa, :($Uj_i = $U_i - +$([:( $(extract(U, ltj+k)) * $(extract(U, lti+k))) for k ∈ 1:chunksize ]...)  ))
+                    for chunk ∈ 2:nchunks
+                        push!(qa, :($Uj_i= $Uj_i - +$([:( $(extract(U, ltj+k)) * $(extract(U, lti+k))) for k ∈ 1+(chunk-1)*chunksize:chunk*chunksize ]...)  ))
+                    end
+                    
+                else
+                    push!(qa, :($Uj_i = $U_i - +$([:( $(extract(U, ltj+k)) * $(extract(U, lti+k))) for k ∈ 1:r ]...)  ))
+                    for chunk ∈ 1:nchunks
+                        push!(qa, :($Uj_i = $Uj_i - +$([:( $(extract(U, ltj+k)) * $(extract(U, lti+k))) for k ∈ 1+r+(chunk-1)*chunksize:chunk*chunksize+r ]...)  ))
+                    end
                 end
+
+                # push!(qa, :($Uj_i = $U_i))
+                # for k ∈ 1:i - 1
+                #     Ujk, Uik = extract(U, ltj+k), extract(U, lti+k)
+                #     push!(qa, :($Uj_i -= $Ujk * $Uik))
+                # end
                 push!(qa, :($Uj_i /= $Ui_i) )
             end
         end
@@ -151,42 +182,49 @@ end
 #     # push!(q.args, U)
 #     qa
 # end
-function gen_extracted_ip_chol_quote!(qa, N, N2, U = :U, S = :S)
-    for i ∈ 1:N2
+function gen_extracted_ip_chol_quote!(qa, ::Type{T}, N, L, U = :U, S = :S) where T
+    for i ∈ 1:L
         push!(qa, :($(id_symbol(S, i)) = $(S)[$i]))
     end
-    gen_ip_chol_quote!(qa, N, N2, U, S, id_symbol)
-    for i ∈ 1:N2
+    gen_ip_chol_quote!(qa, T, N, L, U, S, id_symbol)
+    for i ∈ 1:L
         push!(qa, :($(U)[$i] = $(id_symbol(U, i))))
     end
 end
-function chol_quote(S = :S)
+function chol_quote(S = :S, ::Type{T} = Float64) where T
     q, qa = create_quote()
     for i ∈ 1:N2
         push!(qa, :($(id_symbol(S, i)) = $(S)[$i]))
     end
-    gen_ip_chol_quote!(qa, N, N2, :U, :S, id_symbol)
+    gen_ip_chol_quote!(qa, T, N, N2, :U, :S, id_symbol)
     q
 end
-@generated function LinearAlgebra.chol(S::AbstractSymmetricMatrix{T,N,L2}) where {T,N,L2}
-    q = chol_quote(N, N2, :S)
-    push!(q.args, :(UpperTriangularMatrix{$T,$N,$N2}( ( @ntuple $N2 U )  )))
-    q
-end
-@generated function cholesky!(S::SymmetricMMatrix{T,N,N2}) where {T,N,N2}
+@generated function LinearAlgebra.chol(S::AbstractSymmetricMatrix{T,N,L}) where {T,N,L}
     q, qa = create_quote()
-    gen_extracted_ip_chol_quote!(qa, N, N2, :S, :S)
+    gen_extracted_ip_chol_quote!(qa, T, N, L, :S, :S)
+    push!(q.args, :(StaticUpperTriangularMatrix{$T,$N,$L}( ( @ntuple $L S )  )))
+    q
+end
+@generated function cholesky!(S::SymmetricMatrix{T,N,N2}) where {T,N,N2}
+    q, qa = create_quote()
+    gen_extracted_ip_chol_quote!(qa, T, N, N2, :S, :S)
     push!(q.args, :(UpperTriangularMatrix{$T,$N,$N2}(S.data)))
     q
 end
-@generated function cholesky!(U::UpperTriangularMMatrix{T,N,N2}, S::AbstractSymmetricMatrix{T,N,N2}) where {T,N,N2}
+@generated function cholesky!(U::UpperTriangularMatrix{T,N,N2}, S::AbstractSymmetricMatrix{T,N,N2}) where {T,N,N2}
     q, qa = create_quote()
-    gen_extracted_ip_chol_quote!(qa, N, N2, :U, :S)
+    gen_extracted_ip_chol_quote!(qa, T, N, N2, :U, :S)
     push!(q.args, :U)
     q
 end
+# @generated function cholesky!(U::UpperTriangularMatrix{T,N,L}, S::AbstractSymmetricMatrix{T,N,L}) where {T,N,L}
+#     q, qa = create_quote()
+#     gen_extracted_ip_chol_quote!(qa, T, N, L, :U, :S)
+#     push!(q.args, :U)
+#     q
+# end
 
-function gen_ip_revchol_quote!(qa,N,N2, U = :U, S = :S, extract = extract_symbol)
+function gen_ip_revchol_quote!(qa, ::Type{T}, N,N2, U = :U, S = :S, extract = extract_symbol) where T
 
     for i ∈ N:-1:1
         lti = small_triangle(i)
@@ -236,17 +274,17 @@ S = U * U'
     for i ∈ 1:N2
         push!(qa, :($(id_symbol(:S, i)) = S[$i]))
     end
-    gen_ip_revchol_quote!(qa, N, N2, :U, :S, id_symbol)
+    gen_ip_revchol_quote!(qa, T, N, N2, :U, :S, id_symbol)
     push!(q.args, :(UpperTriangularMatrix{$T,$N,$N2}( ( @ntuple $N2 U ) )))
     q
 end
 
-@generated function reverse_cholesky!(U::UpperTriangularMMatrix{T,N,N2}, S::AbstractSymmetricMatrix{T,N,N2}) where {T,N,N2}
+@generated function reverse_cholesky!(U::UpperTriangularMatrix{T,N,N2}, S::AbstractSymmetricMatrix{T,N,N2}) where {T,N,N2}
     q, qa = create_quote()
     for i ∈ 1:N2
         push!(qa, :($(id_symbol(:S, i)) = S[$i]))
     end
-    gen_ip_revchol_quote!(qa, N, N2, :U, :S, id_symbol)
+    gen_ip_revchol_quote!(qa, T, N, N2, :U, :S, id_symbol)
     for i ∈ 1:N2
         push!(qa, :(U[$i] = $(id_symbol(:U, i))))
     end

@@ -21,6 +21,11 @@
 #     )
 # end
 
+function reasonably_square(mindim, maxdim)
+    # mindim, maxdim = minmax(M, N)
+    round(Int, √2 * mindim, RoundUp) >= maxdim
+end
+
 function blocks_per_dim(N::Integer)
     blocks = 1
     block_size = N
@@ -65,8 +70,8 @@ end
 function dense_sub2ind(dims::NTuple{2}, i, j, offset = 0, joffset = 1)
     M, N = dims
     minind, maxind = minmax(M, N)
-    maxind < cutoff && return (j-joffset)*M + i + offset
-    if √2*minind > maxind && minind > cutoff #divide both
+    maxind <= cutoff && return (j-joffset)*M + i + offset
+    if reasonably_square(minind, maxind) && minind > cutoff #divide both
         Mh, Mr = divrem(M, 2)
         Nh, Nr = divrem(N, 2)
         Mh_p_Mr = Mh + Mr
@@ -100,9 +105,9 @@ function dense_sub2ind(dims::NTuple{2}, i, j, offset = 0, joffset = 1)
 end
 function dense_sub2ind_quote(M, N, offset = 0, joffset = 1)
     minind, maxind = minmax(M, N)
-    maxind < cutoff && return :( (j-$joffset ) * $M + i + $offset )
+    maxind <= cutoff && return :( (j-$joffset ) * $M + i + $offset )
     
-    if √2*minind > maxind && minind > cutoff # we divide the matrix into four blocks.
+    if reasonably_square(minind, maxind) && minind > cutoff # we divide the matrix into four blocks.
         Mh, Mr = divrem(M, 2)
         Nh, Nr = divrem(N, 2)
         Mh_p_Mr = Mh + Mr
@@ -142,10 +147,10 @@ The approach for sub2ind here incurs branches, which would disable SIMD.
 Therefore, Cartesian indexing is strongly discouraged for hot loops.
 Still, it is reasonably fast -- only a handful of ns.
 """
-@generated dense_sub2ind(::Val{M}, ::Val{N}, i, j) where {M,N} = dense_sub2ind_quote(M, N)
+@generated dense_sub2ind(::Val{M}, ::Val{N}, i, j) where {N,M} = dense_sub2ind_quote(M, N)
 
 function triangle_sub2ind(N, i, j, offset = 0, joffset = 1)
-    N < cutoff && return big_triangle(j-joffset) + i + offset
+    N <= cutoff && return big_triangle(j-joffset) + i + offset
     
     Nh, Nr = divrem(N, 2)
     Nh_p_Nr = Nh + Nr
@@ -188,7 +193,55 @@ end
 
 
 
+function block_dim(M,N)
+    mindim, maxdim = minmax(M,N)
+    # The "reasonably square" may need improvement
+    # For example, a 91 x 64 breaks down into
+    # 46 x 64 and 45 x 64; the 45 x 64 also fails
+    # the criterion, and breaks into two 45 x 32 blocks
+    # How bad is this wonky pattern?
+    # Should I round in the comparison?
+    if reasonably_square(mindim, maxdim) && mindim > cutoff
+        M2, Mr = divrem(M, 2)
+        N2, Nr = divrem(N, 2)
+        out = [ (M2+Mr,N2+Nr) (M2+Mr, N2); (M2,N2+Nr) (M2,N2) ] 
+    elseif maxdim <= cutoff
+        out = Matrix{Tuple{Int,Int}}(undef,1,1)
+        out[1] = (M,N)
+    elseif M > N
+        out = Matrix{Tuple{Int,Int}}(undef,2,1)
+        M2, Mr = divrem(M, 2)
+        out[1] = (M2+Mr, N)
+        out[2] = (M2, N)
+    else
+        out = Matrix{Tuple{Int,Int}}(undef,1,2)
+        N2, Nr = divrem(N, 2)
+        out[1] = (M, N2+Nr)
+        out[2] = (M, N2)
+    end
+    out
+end
 
+function split_dim!(n_dim::Vector{Int}, i)
+    N, r = divrem(n_dim[i], 2)
+    n_dim[i] = N
+    insert!(n_dim, i, N+r)
+end
+function split_col(dims::Matrix{Tuple{Int,Int}})
+    num_rowblocks, num_colblocks = size(dims)
+    @assert num_colblocks == 1
+    vcat([block_dim(dims[i]...) for i = 1:length(dims)]...)
+end
+function split_row(dims::Matrix{Tuple{Int}}, i)
+    N, r = divrem(n_dim[i], 2)
+    n_dim[i] = N
+    insert!(n_dim, i, N+r)
+end
+function split_row(dims::Matrix{Tuple{Int,Int}})
+    num_rowblocks, num_colblocks = size(dims)
+    @assert num_rowblocks == 1
+    hcat([block_dim(dims[i]...) for i = 1:length(dims)]...)
+end
 
 
 

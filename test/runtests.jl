@@ -16,5 +16,10 @@ SAS2 = y * y'
 TMS = xtx(x)
 TMS2 = xxt(y)
 
+@show TMS
+@show SAS
+@show TMS2
+@show SAS2
+
 @test all(TMS .== SAS)
 @test all(TMS2 .== SAS2)

@@ -20,7 +20,8 @@ export  SymmetricMatrix,
         reverse_cholesky!,
         xxt,
         xtx,
-        inv!
+        inv!,
+        randmat
 
 
 
@@ -28,7 +29,7 @@ export  SymmetricMatrix,
 # Halfcut is the smallest possible value we need to have a kernel for.
 # If cutoff is even, cutoff + 1 would dispatch to kernels for halfcut+1 and halfcut.
 # If cutoff is odd, cutoff + 1 would dispatch to kernels for halfcut.
-const cutoff = 16
+const cutoff = 15
 # const halfcut = cld(cutoff, 2)
 
 small_triangle(x)::Int = (x-1)*x ÷ 2
@@ -42,8 +43,10 @@ include("meta.jl")
 include("recursive_indexing.jl")
 include("matrix_types/triangular.jl")
 include("matrix_types/symmetric.jl")
+include("matrix_types/recursive_matrix.jl")
 include("decomp_and_inversions/cholesky.jl")
 include("decomp_and_inversions/inverse.jl")
 include("arithmetic/arithmetic.jl")
+include("arithmetic/gemm.jl")
 
 end # module

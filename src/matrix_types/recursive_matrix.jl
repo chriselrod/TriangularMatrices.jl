@@ -32,6 +32,9 @@ function RecursiveMatrix(data::NTuple{L,T}, ::Val{M}) where {M,L,T}
     RecursiveMatrix(data, Val{M}(), ValDiv(Val{L}(),Val{M}()))
 end
 
+randmat(m,n) = RecursiveMatrix{Float64,m,n,m*n}(ntuple(i -> randn(), Val(m*n)))
+randmat(n) = randmat(n,n)
+
 """
 Creating a recursive matrix without compile time size information is not type stable.
 """
@@ -60,11 +63,11 @@ For this reason, few methods are actually implemented on this type. It is used i
 """
 struct PointerRecursiveMatrix{T,M,N,L} <: MutableRecursiveMatrix{T,M,N,L}
     data::Ptr{T}
-    PointerRecursiveMatrix(ptr::Ptr{T}, ::Val{M}, ::Val{N}, ::Val{L}) = new{T,M,N,L}(data)
+    PointerRecursiveMatrix(ptr::Ptr{T}, ::Val{M}, ::Val{N}, ::Val{L}) where {T,M,N,L} = new{T,M,N,L}(ptr)
 end
-function PointerRecursiveMatrix(parent::RecursiveMatrix{T,MP,NP,LP}, ::Val{M}, ::Val{N}, offset=0) where {T,M,N,NP,LP}
+function PointerRecursiveMatrix(parent::RecursiveMatrix{T,MP,NP,LP}, ::Val{M}, ::Val{N}, offset=0) where {T,M,N,MP,NP,LP}
     PointerRecursiveMatrix(
-        unsafe_convert(Ptr{T}, pointer_from_objref(parent) + offset * sizeof(T)),
+        Base.unsafe_convert(Ptr{T}, pointer_from_objref(parent) + offset * sizeof(T)),
         Val{M}(), Val{N}(), ValProd(Val{M}(), Val{N}())
     )
 end
@@ -104,6 +107,7 @@ istransposed(::Adjoint{T,<:AbstractRecursiveMatrix{T}}) where T = true #t()
 istransposed(::Type{<:Adjoint{T,<:AbstractRecursiveMatrix{T}}}) where T = true #t()
 
 sub2ind(t, dims, i, j) = t ? j + (i-1)*dims[2] : i + (j-1)*dims[1]
+
 
 Base.size(::RecurseOrTranpose{T,M,N}) where {T,M,N} = (M,N)
 # @static if VERSION < v"0.7-"

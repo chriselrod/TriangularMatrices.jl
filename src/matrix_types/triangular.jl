@@ -6,8 +6,8 @@ As an implementation detail, indexing with @inbounds into the 0-triangle (ie, lo
 """
 abstract type AbstractTriangularMatrix{T, N, N2} <: AbstractMatrix{T} end
 
-abstract type AbstractUpperTriangular{T, N, N2} <: TriangularMatrix{T, N, N2} end
-abstract type AbstractLowerTriangular{T, N, N2} <: TriangularMatrix{T, N, N2} end
+abstract type AbstractUpperTriangular{T, N, N2} <: AbstractTriangularMatrix{T, N, N2} end
+abstract type AbstractLowerTriangular{T, N, N2} <: AbstractTriangularMatrix{T, N, N2} end
 abstract type MutableUpperTriangular{T, N, N2} <: AbstractUpperTriangular{T, N, N2} end
 abstract type MutableLowerTriangular{T, N, N2} <: AbstractLowerTriangular{T, N, N2} end
 
@@ -19,16 +19,16 @@ end
 struct StaticLowerTriangularMatrix{T, N, N2} <: AbstractLowerTriangular{T, N, N2}
     data::NTuple{N2,T}
 end
-struct UpperTriangularMatrix{T, N, N2} <: MutableUpperTriangular{T, N, N2}
-    data::Base.RefValue{NTuple{N2,T}}
-    function UpperTriangularMatrix{T, N, N2}(d::Base.RefValue{NTuple{N2,T}}) where {T,N,N2}
+mutable struct UpperTriangularMatrix{T, N, N2} <: MutableUpperTriangular{T, N, N2}
+    data::NTuple{N2,T}
+    function UpperTriangularMatrix{T, N, N2}(d::NTuple{N2,T}) where {T,N,N2}
         isbits(T) || error("Can only construct mutable isbits matrices.")
         new{T,N,N2}(d)
     end
 end
-struct LowerTriangularMatrix{T, N, N2} <: MutableLowerTriangular{T, N, N2}
-    data::Base.RefValue{NTuple{N2,T}}
-    function LowerTriangularMatrix{T, N, N2}(d::Base.RefValue{NTuple{N2,T}}) where {T,N,N2}
+mutable struct LowerTriangularMatrix{T, N, N2} <: MutableLowerTriangular{T, N, N2}
+    data::NTuple{N2,T}
+    function LowerTriangularMatrix{T, N, N2}(d::NTuple{N2,T}) where {T,N,N2}
         isbits(T) || error("Can only construct mutable isbits matrices.")
         new{T,N,N2}(d)
     end
@@ -40,6 +40,14 @@ struct PointerLowerTriangularMatrix{T, N, N2} <: MutableLowerTriangular{T, N, N2
     data::Ptr{T}
 end
 Base.size(::AbstractTriangularMatrix{T,N}) where {T,N} = (N,N)
+
+const PointerTriangularMatrix{T,N,N2} = Union{
+    PointerUpperTriangularMatrix{T, N, N2},
+    PointerLowerTriangularMatrix{T, N, N2}
+}
+
+point(A::MutableTriangularMatrix{T}) where T = Base.unsafe_convert(Ptr{T}, pointer_from_objref(A))
+point(A::PointerTriangularMatrix) = A.data
 
 function upper_triangle_quote(N, S = :A)
     N2 = big_triangle(N)
@@ -83,39 +91,7 @@ function recursive_lower_triangle_quote!(qa, N, ::Type{T}) where T
 
 end
 
-# function recursive_upper_triangle_quote(N, S = :S, ::Type{T} = Float64) where T
-#     N2 = big_triangle(N)
-#     q = quote
-#         @inbounds begin
-#             data = Ref{NTuple{$N2,$T}}()
-#             ptr = point(data)
-#             ind = 0
-#         end
-#     end
-#     @static if VERSION > v"0.7-"
-#         qa = q.args[2].args[3].args
-#     else
-#         qa = q.args[2].args[2].args
-#     end
 
-
-# end
-# function recursive_lower_triangle_quote(N, S, ::Type{T} = Float64) where T
-#     N2 = big_triangle(N)
-#     q = quote
-#         @inbounds begin
-#             data = Ref{NTuple{$N2,$T}}()
-#             ptr = point(data)
-#             ind = 0
-#         end
-#     end
-#     @static if VERSION > v"0.7-"
-#         qa = q.args[2].args[3].args
-#     else
-#         qa = q.args[2].args[2].args
-#     end
-
-# end
 function UpperTriangularMatrix(A::AbstractMatrix)
     m, n = size(A)
     @assert m == n
@@ -126,14 +102,14 @@ end
     push!(q.args, :(UpperTriangularMatrix{$T,$N,$N2}( @ntuple $N2 A )))
     q
 end
-function UpperTriangularMMatrix(A::AbstractMatrix)
+function StaticUpperTriangularMatrix(A::AbstractMatrix)
     m, n = size(A)
     @assert m == n
-    UpperTriangularMMatrix(A, Val(n))
+    StaticUpperTriangularMatrix(A, Val(n))
 end
-@generated function UpperTriangularMMatrix(A::AbstractMatrix{T}, ::Val{N}) where {T,N}
+@generated function StaticUpperTriangularMatrix(A::AbstractMatrix{T}, ::Val{N}) where {T,N}
     q, N2 = upper_triangle_quote(N, T)
-    push!(q.args, :(UpperTriangularMMatrix{$T,$N,$N2}( Ref( @ntuple $N2 A ))))
+    push!(q.args, :(StaticUpperTriangularMatrix{$T,$N,$N2}( @ntuple $N2 A )))
     q
 end
 function LowerTriangularMatrix(A::AbstractMatrix)
@@ -146,43 +122,40 @@ end
     push!(q.args, :(LowerTriangularMatrix{$T,$N,$N2}( @ntuple $N2 A )))
     q
 end
-function LowerTriangularMMatrix(A::AbstractMatrix)
+function StaticLowerTriangularMatrix(A::AbstractMatrix)
     m, n = size(A)
     @assert m == n
-    LowerTriangularMMatrix(A, Val(n))
+    StaticLowerTriangularMatrix(A, Val(n))
 end
-@generated function LowerTriangularMMatrix(A::AbstractMatrix{T}, ::Val{N}) where {T,N}
+@generated function StaticLowerTriangularMatrix(A::AbstractMatrix{T}, ::Val{N}) where {T,N}
     q, N2 = lower_triangle_quote(N, T)
-    push!(q.args, :(LowerTriangularMMatrix{$T,$N,$N2}( Ref( @ntuple $N2 A ))))
+    push!(q.args, :(StaticLowerTriangularMatrix{$T,$N,$N2}( @ntuple $N2 A )))
     q
 end
 UpperTriangularMatrix(data::NTuple{N2,T}) where {T,N2} = UpperTriangularMatrix(data,ValI(Val{N2}()))
-UpperTriangularMMatrix(data::NTuple{N2,T}) where {T,N2} = UpperTriangularMMatrix(data,ValI(Val{N2}()))
+StaticUpperTriangularMatrix(data::NTuple{N2,T}) where {T,N2} = StaticUpperTriangularMatrix(data,ValI(Val{N2}()))
 UpperTriangularMatrix(data::SVector{N2,T}) where {T,N2} = UpperTriangularMatrix(data.data,ValI(Val{N2}()))
-UpperTriangularMMatrix(data::SVector{N2,T}) where {T,N2} = UpperTriangularMMatrix(data.data,ValI(Val{N2}()))
+StaticUpperTriangularMatrix(data::SVector{N2,T}) where {T,N2} = StaticUpperTriangularMatrix(data.data,ValI(Val{N2}()))
 UpperTriangularMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = UpperTriangularMatrix{T,N,N2}(data)
-UpperTriangularMMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = UpperTriangularMMatrix{T,N,N2}(Ref(data))
-UpperTriangularMatrix(data::UpperTriangularMMatrix{T,N,N2}) where {T,N,N2} = UpperTriangularMatrix{T,N,N2}(data.data[])
-UpperTriangularMMatrix(data::UpperTriangularMatrix{T,N,N2}) where {T,N,N2} = UpperTriangularMMatrix{T,N,N2}(Ref(data.data))
+StaticUpperTriangularMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = StaticUpperTriangularMatrix{T,N,N2}(data)
+UpperTriangularMatrix(data::StaticUpperTriangularMatrix{T,N,N2}) where {T,N,N2} = UpperTriangularMatrix{T,N,N2}(data.data)
+StaticUpperTriangularMatrix(data::UpperTriangularMatrix{T,N,N2}) where {T,N,N2} = StaticUpperTriangularMatrix{T,N,N2}(data.data)
 
 LowerTriangularMatrix(data::NTuple{N2,T}) where {T,N2} = LowerTriangularMatrix(data,ValI(Val{N2}()))
-LowerTriangularMMatrix(data::NTuple{N2,T}) where {T,N2} = LowerTriangularMMatrix(data,ValI(Val{N2}()))
+StaticLowerTriangularMatrix(data::NTuple{N2,T}) where {T,N2} = StaticLowerTriangularMatrix(data,ValI(Val{N2}()))
 LowerTriangularMatrix(data::SVector{N2,T}) where {T,N2} = LowerTriangularMatrix(data.data,ValI(Val{N2}()))
-LowerTriangularMMatrix(data::SVector{N2,T}) where {T,N2} = LowerTriangularMMatrix(data.data,ValI(Val{N2}()))
+StaticLowerTriangularMatrix(data::SVector{N2,T}) where {T,N2} = StaticLowerTriangularMatrix(data.data,ValI(Val{N2}()))
 LowerTriangularMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = LowerTriangularMatrix{T,N,N2}(data)
-LowerTriangularMMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = LowerTriangularMMatrix{T,N,N2}(Ref(data))
-LowerTriangularMatrix(data::LowerTriangularMMatrix{T,N,N2}) where {T,N,N2} = LowerTriangularMatrix{T,N,N2}(data.data[])
-LowerTriangularMMatrix(data::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = LowerTriangularMMatrix{T,N,N2}(Ref(data.data))
+StaticLowerTriangularMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = StaticLowerTriangularMatrix{T,N,N2}(data)
+LowerTriangularMatrix(data::StaticLowerTriangularMatrix{T,N,N2}) where {T,N,N2} = LowerTriangularMatrix{T,N,N2}(data.data)
+StaticLowerTriangularMatrix(data::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = StaticLowerTriangularMatrix{T,N,N2}(data.data)
 
-@inline Base.getindex(A::UpperTriangularMatrix, i::Integer) = A.data[i]
-@inline Base.getindex(A::LowerTriangularMatrix, i::Integer) = A.data[i]
-@inline function Base.getindex(A::UpperTriangularMMatrix{T}, i::Integer) where T
-    unsafe_load(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), i)
-end
-@inline function Base.getindex(A::LowerTriangularMMatrix{T}, i::Integer) where T
-    unsafe_load(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), i)
-end
-@inline function Base.getindex(A::UpperTriangularMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
+@inline Base.getindex(A::AbstractTriangularMatrix, i::Integer) = A.data[i]
+@inline Base.getindex(A::PointerTriangularMatrix, i::Integer) = unsafe_load(A.data, i)
+
+
+
+@inline function Base.getindex(A::StaticUpperTriangularMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
     @boundscheck begin
         max(i,j) > N && throw(BoundsError())
         if i > j
@@ -192,7 +165,7 @@ end
     @inbounds out = A.data[small_triangle(j)+i]
     out
 end
-@inline function Base.getindex(A::LowerTriangularMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
+@inline function Base.getindex(A::StaticLowerTriangularMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
     @boundscheck begin
         max(i,j) > N && throw(BoundsError())
         if i < j
@@ -202,7 +175,7 @@ end
     @inbounds out = A.data[small_triangle(i)+j]
     out
 end
-@inline function Base.getindex(A::UpperTriangularMMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
+@inline function Base.getindex(A::UpperTriangularMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
     @boundscheck begin
         max(i,j) > N && throw(BoundsError())
         if i > j
@@ -211,9 +184,9 @@ end
     end
     # @inbounds out = A.data[][small_triangle(j)+i]
     # out
-    unsafe_load(point(A), small_triangle(j)+i)
+    A.data[triangle_sub2ind(Val{N}(), i, j)]
 end
-@inline function Base.getindex(A::LowerTriangularMMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
+@inline function Base.getindex(A::LowerTriangularMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
     @boundscheck begin
         max(i,j) > N && throw(BoundsError())
         if i < j
@@ -222,31 +195,32 @@ end
     end
     # @inbounds out = A.data[][small_triangle(i)+j]
     # out
-    unsafe_load(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), small_triangle(i)+j)
+    # unsafe_load(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), small_triangle(i)+j)
+    A.data[triangle_sub2ind(Val{N}(), j, i)]
 end
-@inline function Base.setindex!(A::TriangularMatrix{T,N,N2}, val, i::Integer) where  {T,N,N2}
+@inline function Base.setindex!(A::MutableTriangularMatrix{T,N,N2}, val, i::Integer) where  {T,N,N2}
     @boundscheck i > N2 && throw(BoundsError())
-    unsafe_store!(Base.unsafe_convert(Ptr{T}, pointer_from_objref(A.data)), convert(T, val), i)
+    unsafe_store!(point(A), convert(T, val), i)
     return val
 end
-@inline function Base.setindex!(A::UpperTriangularMMatrix{T,N,N2}, val, i::Integer, j::Integer) where  {T,N,N2}
+@inline function Base.setindex!(A::MutableUpperTriangular{T,N,N2}, val, i::Integer, j::Integer) where  {T,N,N2}
     @boundscheck begin
         max(i,j) > N && throw(BoundsError())
         if i > j
             throw("Cannot set index within lower triangular of UpperTriangularMatrix.")
         end
     end
-    unsafe_store!(point(A), convert(T, val), small_triangle(j)+i)
+    unsafe_store!(point(A), convert(T, val), triangle_sub2ind(Val{N}(), i, j))
     return val
 end
-@inline function Base.setindex!(A::LowerTriangularMMatrix{T,N,N2}, val, i::Integer, j::Integer) where  {T,N,N2}
+@inline function Base.setindex!(A::MutableLowerTriangular{T,N,N2}, val, i::Integer, j::Integer) where  {T,N,N2}
     @boundscheck begin
         max(i,j) > N && throw(BoundsError())
         if i < j
             throw("Cannot set index within upper triangular of LowerTriangularMatrix.")
         end
     end
-    unsafe_store!(point(A), convert(T, val), small_triangle(i)+j)
+    unsafe_store!(point(A), convert(T, val), triangle_sub2ind(Val{N}(), j, i))
     return val
 end
 

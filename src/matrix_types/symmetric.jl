@@ -7,9 +7,9 @@ Actually Hermitian, because adjoint returns itself.
 struct StaticSymmetricMatrix{T,N,N2} <: AbstractSymmetricMatrix{T,N,N2}
     data::NTuple{N2,T}
 end
-struct SymmetricMatrix{T,N,N2} <: MutableSymmetricMatrix{T,N,N2}
-    data::Base.RefValue{NTuple{N2,T}}
-    function SymmetricMatrix{T, N, N2}(d::Base.RefValue{NTuple{N2,T}}) where {T,N,N2}
+mutable struct SymmetricMatrix{T,N,N2} <: MutableSymmetricMatrix{T,N,N2}
+    data::NTuple{N2,T}
+    function SymmetricMatrix{T, N, N2}(d::NTuple{N2,T}) where {T,N,N2}
         isbits(T) || error("Can only construct mutable isbits matrices.")
         new{T,N,N2}(d)
     end
@@ -19,7 +19,6 @@ struct PointerSymmetricMatrix{T,N,N2} <: MutableSymmetricMatrix{T,N,N2}
 end
 Base.size(::AbstractSymmetricMatrix{T,N}) where {T,N} = (N,N)
 
-@inline point(S::MutableSymmetricMatrix) = point(S.data)
 
 function StaticSymmetricMatrix(A::AbstractMatrix)
     m, n = size(A)
@@ -38,7 +37,6 @@ function SymmetricMatrix(A::AbstractMatrix)
 end
 @generated function SymmetricMatrix(A::AbstractMatrix{T}, ::Val{N}) where {T,N}
     q, N2 = upper_triangle_quote(N, T)
-    # push!(q.args, :(SymmetricMatrix{$T,$N,$N2}( Ref( @ntuple $N2 A ))))
     push!(q.args, :(SymmetricMatrix{$T,$N,$N2}( data )))
     q
 end
@@ -55,16 +53,17 @@ SymmetricMatrix(data::NTuple{N2,T}) where {T,N2} = SymmetricMatrix(data,ValI(Val
 StaticSymmetricMatrix(data::SVector{N2,T}) where {T,N2} = StaticSymmetricMatrix(data.data,ValI(Val{N2}()))
 SymmetricMatrix(data::SVector{N2,T}) where {T,N2} = SymmetricMatrix(data.data,ValI(Val{N2}()))
 StaticSymmetricMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = StaticSymmetricMatrix{T,N,N2}(data)
-SymmetricMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = SymmetricMatrix{T,N,N2}(Ref(data))
-StaticSymmetricMatrix(data::SymmetricMMatrix{T,N,N2}) where {T,N,N2} = StaticSymmetricMatrix{T,N,N2}(data.data[])
-SymmetricMatrix(data::SymmetricMatrix{T,N,N2}) where {T,N,N2} = SymmetricMatrix{T,N,N2}(Ref(data.data))
+SymmetricMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = SymmetricMatrix{T,N,N2}(data)
+StaticSymmetricMatrix(data::SymmetricMatrix{T,N,N2}) where {T,N,N2} = StaticSymmetricMatrix{T,N,N2}(data.data)
+SymmetricMatrix(data::StaticSymmetricMatrix{T,N,N2}) where {T,N,N2} = SymmetricMatrix{T,N,N2}(data.data)
+
+point(A::MutableSymmetricMatrix{T}) where T = Base.unsafe_convert(Ptr{T}, pointer_from_objref(A))
+point(A::PointerSymmetricMatrix) = A.data
 
 
 @inline Base.getindex(A::StaticSymmetricMatrix, i::Integer) = A.data[i]
-@inline function Base.getindex(A::SymmetricMatrix{T}, i::Integer) where T
-    unsafe_load(point(A), i)
-end
-@inline Base.getindex(A::PointerSymmetricMatrix, i::Integer) where T = unsafe_load(A.data, i)
+@inline Base.getindex(A::SymmetricMatrix, i::Integer) = A.data[i]
+@inline Base.getindex(A::PointerSymmetricMatrix, i::Integer) = unsafe_load(A.data, i)
 @inline function Base.getindex(A::StaticSymmetricMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
     @boundscheck begin
         max(i,j) > N && throw("BoundsError: index ($i, $j) is out of bounds.")
@@ -110,12 +109,12 @@ be careful that your computations are actually doing what you intend.
 You can use triangle_sub2ind (which incurs branching) to explore the behavior of
 Cartesian -> Linear indices for Symmetric and Triangular matrices.
 """
-function Base.getindex(A::MutableSymmetricMatrix{T,N}, i::Integer, j::Integer) where {T,N}
+@inline function Base.getindex(A::MutableSymmetricMatrix{T,N}, i::Integer, j::Integer) where {T,N}
     @boundscheck begin
         max(i,j) > N && throw("BoundsError: index ($i, $j) is out of bounds.")
     end
     i, j = minmax(i, j) # j >= i
-    unsafe_load(point(A), triangle_sub2ind(Val{N}(), i, j))
+    A[triangle_sub2ind(Val{N}(), i, j)]
 end
 @generated function Base.getindex(A::MutableSymmetricMatrix{T,N}, ::Val{1}, ::Val{1}) where {T, N}
     Nhalf = cld(N,2)

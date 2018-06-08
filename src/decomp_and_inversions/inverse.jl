@@ -78,19 +78,19 @@ function gen_extracted_ip_inv_quote!(qa, N, L, Ui = :Ui, U = :U)
 end
 
 
-@generated function LinearAlgebra.inv!(U::Union{UpperTriangularMMatrix{T,N,L},LowerTriangularMMatrix{T,N,L}}) where {T,N,L}
+@generated function LinearAlgebra.inv!(U::Union{UpperTriangularMatrix{T,N,L},LowerTriangularMatrix{T,N,L}}) where {T,N,L}
     q, qa = create_quote()
     gen_extracted_ip_inv_quote!(qa, N, L, :U, :U)
     push!(q.args, :U)
     q
 end
-@generated function LinearAlgebra.inv!(Ui::UpperTriangularMMatrix{T,N,L}, U::AbstractUpperTriangular{T,N,L}) where {T,N,L}
+@generated function LinearAlgebra.inv!(Ui::UpperTriangularMatrix{T,N,L}, U::AbstractUpperTriangular{T,N,L}) where {T,N,L}
     q, qa = create_quote()
     gen_extracted_ip_inv_quote!(qa, N, L, :Ui, :U)
     push!(q.args, :Ui)
     q
 end
-@generated function LinearAlgebra.inv!(Ui::LowerTriangularMMatrix{T,N,L},U::AbstractLowerTriangular{T,N,L}) where {T,N,L}
+@generated function LinearAlgebra.inv!(Ui::LowerTriangularMatrix{T,N,L},U::AbstractLowerTriangular{T,N,L}) where {T,N,L}
     q, qa = create_quote()
     gen_extracted_ip_inv_quote!(qa, N, L, :Ui, :U)
     push!(q.args, :Ui)
