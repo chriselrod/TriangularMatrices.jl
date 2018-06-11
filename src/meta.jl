@@ -36,10 +36,10 @@ function initial_quote(N2::Int, prefix::Symbol = :A)
     q, qa
 end
 
-function extract_linear!(qa, N, prefix = :B, ind_offset = 0, label_offset = 0)
+function extract_linear!(qa, N, prefix = :B, extractedvar = prefix, ind_offset = 0, label_offset = 0)
     prefix_ = Symbol(prefix, :_)
     for i ∈ 1:N
-        push!(qa, :($(Symbol(prefix_, i + label_offset)) = $(prefix)[$(i+ind_offset)]))
+        push!(qa, :($(Symbol(prefix_, i + label_offset)) = $(extractedvar)[$(i+ind_offset)]))
     end
     qa
 end
@@ -100,9 +100,4 @@ end
     N, r = divrem(L, M)
     @assert r == 0
     Val{N}()
-end
-
-function splitint(N::Int)
-    N, Nr = divrem(N, 2)
-    N+Nr, N
 end

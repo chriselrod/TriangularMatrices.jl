@@ -2,7 +2,9 @@ module TriangularMatrices
 
 using Compat, Compat.LinearAlgebra
 const LinearAlgebra = Compat.LinearAlgebra
-using StaticArrays, Base.Cartesian
+using   Base.Cartesian,
+        MacroTools,
+        StaticArrays
 
 const Sized{N,T} = Union{SVector{N,T}, NTuple{N,T}}
 
@@ -29,7 +31,7 @@ export  SymmetricMatrix,
 # Halfcut is the smallest possible value we need to have a kernel for.
 # If cutoff is even, cutoff + 1 would dispatch to kernels for halfcut+1 and halfcut.
 # If cutoff is odd, cutoff + 1 would dispatch to kernels for halfcut.
-const cutoff = 15
+const cutoff = 8
 # const halfcut = cld(cutoff, 2)
 
 small_triangle(x)::Int = (x-1)*x ÷ 2

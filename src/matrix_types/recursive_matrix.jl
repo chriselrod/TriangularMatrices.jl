@@ -13,6 +13,10 @@ end
 abstract type AbstractRecursiveMatrix{T,M,N,L} <: StaticArrays.StaticArray{Tuple{M,N}, T, 2} end
 abstract type MutableRecursiveMatrix{T,M,N,L} <: AbstractRecursiveMatrix{T,M,N,L} end
 
+struct StaticRecursiveMatrix{T,M,N,L} <: AbstractRecursiveMatrix{T,M,N,L}
+    data::NTuple{L,T}
+    StaticRecursiveMatrix{T,M,N,L}(data::NTuple{L,T}) where {T,M,N,L} = new(data)
+end
 mutable struct RecursiveMatrix{T,M,N,L} <: MutableRecursiveMatrix{T,M,N,L}
     data::NTuple{L,T}
     RecursiveMatrix{T,M,N,L}(data::NTuple{L,T}) where {T,M,N,L} = new(data)
@@ -34,6 +38,8 @@ end
 
 randmat(m,n) = RecursiveMatrix{Float64,m,n,m*n}(ntuple(i -> randn(), Val(m*n)))
 randmat(n) = randmat(n,n)
+srandmat(m,n) = StaticRecursiveMatrix{Float64,m,n,m*n}(ntuple(i -> randn(), Val(m*n)))
+srandmat(n) = srandmat(n,n)
 
 """
 Creating a recursive matrix without compile time size information is not type stable.
@@ -85,6 +91,8 @@ const RecursivePointerMatrixOrTranpose{T,M,N,L} = Union{
 const RecurseOrTranpose{T,M,N,L} = Union{
     RecursiveMatrix{T,M,N,L},
     Adjoint{T,RecursiveMatrix{T,N,M,L}},
+    StaticRecursiveMatrix{T,M,N,L},
+    Adjoint{T,StaticRecursiveMatrix{T,M,N,L}},
     PointerRecursiveMatrix{T,M,N,L},
     Adjoint{T,PointerRecursiveMatrix{T,N,M,L}}
 }
@@ -105,6 +113,10 @@ istransposed(::AbstractRecursiveMatrix) = false #n()
 istransposed(::Type{<:AbstractRecursiveMatrix}) = false #n()
 istransposed(::Adjoint{T,<:AbstractRecursiveMatrix{T}}) where T = true #t()
 istransposed(::Type{<:Adjoint{T,<:AbstractRecursiveMatrix{T}}}) where T = true #t()
+vistransposed(::AbstractRecursiveMatrix) = Val{false}() #n()
+vistransposed(::Type{<:AbstractRecursiveMatrix}) = Val{false}() #n()
+vistransposed(::Adjoint{T,<:AbstractRecursiveMatrix{T}}) where T = Val{true}() #t()
+vistransposed(::Type{<:Adjoint{T,<:AbstractRecursiveMatrix{T}}}) where T = Val{true}() #t()
 
 sub2ind(t, dims, i, j) = t ? j + (i-1)*dims[2] : i + (j-1)*dims[1]
 
@@ -154,7 +166,16 @@ end
 #         # A.data[][i]
 #     end
 # end
-
+@inline function Base.getindex(A::StaticRecursiveMatrix{T,M,N,L}, i::Int) where {T,M,N,L}
+    @boundscheck i > L && throw(BoundsError())
+    @inbounds out = A.data[i]
+    out
+end
+@inline function Base.getindex(A::StaticRecursiveMatrix{T,M,N,L}, i::Int, j::Int) where {T,M,N,L}
+    @boundscheck ( i > M || j > N ) && throw(BoundsError())
+    @inbounds out = A.data[ (j-1)*M + i ]
+    out
+end
 
 @generated function Base.getindex(A::RecursiveMatrixOrTranpose{T,M,N,L}, i::Int, j::Int) where {T,M,N,L}
     bounds_error_string = "($M, $N) array at index (\$i,\$j)."
@@ -165,21 +186,37 @@ end
     end
     quote #Add recursion.
         Base.@_inline_meta
-        @boundscheck begin
-            ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
-        end
+        @boundscheck ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
         A.data[$linear_ind_expr]
     end
 end
 
-@generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val, i::Int) where {T,M,N,L}
+@generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::T, i::Int) where {T,M,N,L}
+    bounds_error_string = "($M, $N) array at index (\$i,\$j)."
+    quote #Add recursion.
+        Base.@_inline_meta
+        @boundscheck $L < i && throw(BoundsError($bounds_error_string))
+        unsafe_store!(point(A), val, i )
+    end
+end
+@generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::I, i::Int) where {T,M,N,L,I<:Integer}
     bounds_error_string = "($M, $N) array at index (\$i,\$j)."
     quote #Add recursion.
         Base.@_inline_meta
         @boundscheck begin
             $L < i && throw(BoundsError($bounds_error_string))
         end
-        unsafe_store!(point(A), convert(T, val), i )
+        unsafe_store!(point(A), convert(T,val), i )
+    end
+end
+@generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::V, i::Int) where {T,M,N,L,V}
+    bounds_error_string = "($M, $N) array at index (\$i,\$j)."
+    quote #Add recursion.
+        Base.@_inline_meta
+        @boundscheck begin
+            $L < i && throw(BoundsError($bounds_error_string))
+        end
+        unsafe_store!(Base.unsafe_convert(Ptr{V}, pointer_from_objref(A) + sizeof(T)*(i-1) ), val, 1 )
     end
 end
 # @generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::K, i::Int, ::Type{K}) where {T,M,N,L,K}
@@ -193,7 +230,7 @@ end
 #     end
 # end
 
-@generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val, i::Int, j::Int) where {T,M,N,L}
+@generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::T, i::Int, j::Int) where {T,M,N,L}
     bounds_error_string = "($M, $N) array at index (\$i,\$j)."
     if istransposed(A)
         linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), j, i))
@@ -207,7 +244,42 @@ end
         end
         # unsafe_store!(point(A), convert(T, val), sub2ind(istransposed(A), ($M,$N), i, j) )
 
-        unsafe_store!(point(A), convert(T, val), $linear_ind_expr )
+        unsafe_store!(point(A), val, $linear_ind_expr )
+    end
+end
+@generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::I, i::Int, j::Int) where {T,M,N,L,I<:Integer}
+    bounds_error_string = "($M, $N) array at index (\$i,\$j)."
+    if istransposed(A)
+        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), j, i))
+    else
+        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), i, j))
+    end
+    quote #Add recursion.
+        Base.@_inline_meta
+        @boundscheck begin
+            ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
+        end
+        # unsafe_store!(point(A), convert(T, val), sub2ind(istransposed(A), ($M,$N), i, j) )
+
+        unsafe_store!(point(A), convert(T,val), $linear_ind_expr )
+    end
+end
+
+
+@generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::V, i::Int, j::Int) where {T,M,N,L,V}
+    bounds_error_string = "($M, $N) array at index (\$i,\$j)."
+    if istransposed(A)
+        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), j, i))
+    else
+        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), i, j))
+    end
+    quote #Add recursion.
+        Base.@_inline_meta
+        @boundscheck begin
+            ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
+        end
+        # unsafe_store!(point(A), convert(T, val), sub2ind(istransposed(A), ($M,$N), i, j) )
+        unsafe_store!(Base.unsafe_convert(Ptr{V}, pointer_from_objref(A) + sizeof(T)*(($linear_ind_expr)-1) ), val, 1 )
     end
 end
 
