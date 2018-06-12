@@ -340,20 +340,20 @@ function block_dim(M,N)
     out
 end
 
-function split_dim!(n_dim::Vector{Int}, i)
-    N1, N2 = split_dim(n_dim[i])
-    n_dim[i] = N2
-    insert!(n_dim, i, N1)
-end
+# function split_dim!(n_dim::Vector{Int}, i)
+#     N1, N2 = split_dim(n_dim[i])
+#     n_dim[i] = N2
+#     insert!(n_dim, i, N1)
+# end
+# function split_row(dims::Matrix{Tuple{Int}}, i)
+#     N1, N2 = split_dim(n_dim[i])
+#     n_dim[i] = N2
+#     insert!(n_dim, i, N1)
+# end
 function split_col(dims::Matrix{Tuple{Int,Int}})
     num_rowblocks, num_colblocks = size(dims)
     @assert num_colblocks == 1
     vcat([block_dim(dims[i]...) for i = 1:length(dims)]...)
-end
-function split_row(dims::Matrix{Tuple{Int}}, i)
-    N1, N2 = split_dim(n_dim[i])
-    n_dim[i] = N2
-    insert!(n_dim, i, N1)
 end
 function split_row(dims::Matrix{Tuple{Int,Int}})
     num_rowblocks, num_colblocks = size(dims)
