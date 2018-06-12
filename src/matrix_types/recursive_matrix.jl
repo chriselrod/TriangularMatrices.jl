@@ -36,7 +36,14 @@ function RecursiveMatrix(data::NTuple{L,T}, ::Val{M}) where {M,L,T}
     RecursiveMatrix(data, Val{M}(), ValDiv(Val{L}(),Val{M}()))
 end
 
-randmat(m,n) = RecursiveMatrix{Float64,m,n,m*n}(ntuple(i -> randn(), Val(m*n)))
+function randmat(::Val{M},::Val{N},::Val{L}) where {M,N,L}
+    out = RecursiveMatrix{Float64,M,N,L}()
+    @inbounds for i = 1:L
+        out[i] = randn()
+    end
+    out
+end
+randmat(m,n) = randmat(Val(m),Val(n),Val(m*n))
 randmat(n) = randmat(n,n)
 srandmat(m,n) = StaticRecursiveMatrix{Float64,m,n,m*n}(ntuple(i -> randn(), Val(m*n)))
 srandmat(n) = srandmat(n,n)
@@ -69,7 +76,7 @@ For this reason, few methods are actually implemented on this type. It is used i
 """
 struct PointerRecursiveMatrix{T,M,N,L} <: MutableRecursiveMatrix{T,M,N,L}
     data::Ptr{StaticRecursiveMatrix{T,cutoff,cutoff,cutoff2}}
-    PointerRecursiveMatrix(ptr::Ptr{StaticRecursiveMatrix{T,cutoff,cutoff,cutoff2}}, ::Val{M}, ::Val{N}, ::Val{L}) where {T,M,N,L} = new{T,M,N,L}(ptr)
+    # PointerRecursiveMatrix(ptr::Ptr{StaticRecursiveMatrix{T,cutoff,cutoff,cutoff2}}, ::Val{M}, ::Val{N}, ::Val{L}) where {T,M,N,L} = new{T,M,N,L}(ptr)
 end
 function PointerRecursiveMatrix(parent::RecursiveMatrix{T,MP,NP,LP}, ::Val{M}, ::Val{N}, offset=0) where {T,M,N,MP,NP,LP}
     PointerRecursiveMatrix(
@@ -83,7 +90,7 @@ struct HalfBlock{m,n,h} end
 Base.@pure Block(m,n) = Block{m,n}()
 Base.@pure HalfBlock(m,n,h) = HalfBlock{m,n,h}()
 struct BlockIndex{T,M,N,L}
-    i::Int
+    i::UInt
 end
 
 const RecursiveMatrixOrTranpose{T,M,N,L} = Union{
@@ -152,7 +159,8 @@ Base.size(::RecurseOrTranpose{T,M,N}) where {T,M,N} = (M,N)
 #     end
 # end
 
-# @inline point(A::RecursiveMatrix{T}) where T = Base.unsafe_convert(Ptr{T}, pointer_from_objref(A))
+@inline float_point(A::RecursiveMatrix{T}) where T = Base.unsafe_convert(Ptr{T}, pointer_from_objref(A))
+@inline float_point(A::PointerRecursiveMatrix{T}) where T = Base.unsafe_convert(Ptr{T}, A.data)
 @inline point(A::RecursiveMatrix) = pointer_from_objref(A)
 @inline point(A::PointerRecursiveMatrix) = A.data
 @inline convert_point(A::RecursiveMatrix, ::Type{T}) where T = Base.unsafe_convert(Ptr{T}, pointer_from_objref(A))
@@ -309,7 +317,7 @@ end
     quote #Add recursion.
         Base.@_inline_meta
         @boundscheck $L < i && throw(BoundsError($bounds_error_string))
-        unsafe_store!(point(A), val, i )
+        unsafe_store!(float_point(A), val, i )
     end
 end
 @generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::I, i::Int) where {T,M,N,L,I<:Integer}
@@ -319,7 +327,7 @@ end
         @boundscheck begin
             $L < i && throw(BoundsError($bounds_error_string))
         end
-        unsafe_store!(point(A), convert(T,val), i )
+        unsafe_store!(float_point(A), convert(T,val), i )
     end
 end
 @generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::V, i::Int) where {T,M,N,L,V}
@@ -329,19 +337,9 @@ end
         @boundscheck begin
             $L < i && throw(BoundsError($bounds_error_string))
         end
-        unsafe_store!(Base.unsafe_convert(Ptr{V}, pointer_from_objref(A) + sizeof(T)*(i-1) ), val, 1 )
+        unsafe_store!(Base.unsafe_convert(Ptr{V}, pointer_from_objref(A) + sizeof(T)*(i-1) ), val)#, 1 )
     end
 end
-# @generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::K, i::Int, ::Type{K}) where {T,M,N,L,K}
-#     bounds_error_string = "($M, $N) array at index (\$i,\$j)."
-#     quote #Add recursion.
-#         Base.@_inline_meta
-#         # @boundscheck begin
-#         #     $L < i && throw(BoundsError($bounds_error_string))
-#         # end
-#         unsafe_store!(Base.unsafe_convert(Ptr{$K}, pointer_from_data(A.data) + i*$(sizeof(T)) ), 1 )
-#     end
-# end
 
 @generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::T, i::Int, j::Int) where {T,M,N,L}
     bounds_error_string = "($M, $N) array at index (\$i,\$j)."
@@ -360,23 +358,6 @@ end
         unsafe_store!(point(A), val, $linear_ind_expr )
     end
 end
-@generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::I, i::Int, j::Int) where {T,M,N,L,I<:Integer}
-    bounds_error_string = "($M, $N) array at index (\$i,\$j)."
-    if istransposed(A)
-        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), j, i))
-    else
-        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), i, j))
-    end
-    quote #Add recursion.
-        Base.@_inline_meta
-        @boundscheck begin
-            ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
-        end
-        # unsafe_store!(point(A), convert(T, val), sub2ind(istransposed(A), ($M,$N), i, j) )
-
-        unsafe_store!(point(A), convert(T,val), $linear_ind_expr )
-    end
-end
 
 
 @generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::V, i::Int, j::Int) where {T,M,N,L,V}
@@ -392,10 +373,27 @@ end
             ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
         end
         # unsafe_store!(point(A), convert(T, val), sub2ind(istransposed(A), ($M,$N), i, j) )
-        unsafe_store!(Base.unsafe_convert(Ptr{V}, pointer_from_objref(A) + sizeof(T)*(($linear_ind_expr)-1) ), val, 1 )
+        unsafe_store!(Base.unsafe_convert(Ptr{V}, pointer_from_objref(A) + sizeof(T)*(($linear_ind_expr)-1) ), val)#, 1 )
     end
 end
 
+# """
+# The second block indicates that the number of dimensions we are splitting things into.
+# """
+# @generated function BlockIndex(::Type{MutableRecursiveMatrix{T,M,N,L}}, ::Block{m,n}, ::Block{MC,NC}) where {T,M,N,L,m,n,MC,NC}
+#     full_m_blocks, m_r = divrem(M, cutoff)
+#     full_n_blocks, n_r = divrem(N, cutoff)
+
+#     if m <= full_m_blocks && n <= full_n_blocks
+#         return BlockIndex{T,cutoff,cutoff,cutoff2}(sizeof(T)*( (m-1)*cutoff2 + (n-1)*M*cutoff) )
+#     elseif m <= full_m_blocks # we're on the far right
+#         return BlockIndex{T,cutoff,n_r,cutoff*n_r}(sizeof(T)*( (m-1)*cutoff*n_r + (n-1)*M*cutoff))
+#     elseif n <= full_n_blocks
+#         return BlockIndex{T,m_r,cutoff,m_r*cutoff}(sizeof(T)*( (m-1)*cutoff2 + (n-1)*M*cutoff ) )
+#     else
+#         return BlockIndex{T,m_r,n_r,m_r*n_r}(sizeof(T)*( L - m_r*n_r ) )
+#     end
+# end
 #
 # This function shouldn't really be typed on m,n, or...
 #
@@ -413,6 +411,8 @@ end
         return BlockIndex{T,m_r,n_r,m_r*n_r}(sizeof(T)*( L - m_r*n_r ) )
     end
 end
+
+
 @generated function BlockIndex(::Type{MutableRecursiveMatrix{T,M,N,L}}, ::HalfBlock{m,n,h}) where {T,M,N,L,m,n,h}
     full_m_blocks, m_r = divrem(M, cutoff)
     full_n_blocks, n_r = divrem(N, cutoff)
@@ -435,30 +435,38 @@ end
 @generated function Base.getindex(A::MutableRecursiveMatrix{T,M,N,L}, i::BlockIndex{T,m,n,mn}) where {T,M,N,L,m,n,mn}
     quote 
         Base.@_inline_meta
-        Base.unsafe_load(convert_point(A, StaticRecursiveMatrix{T,m,n,mn} ) + i.i)
+        Base.unsafe_load(convert_point(A, StaticRecursiveMatrix{$T,$m,$n,$mn} ) + i.i)
     end
 end
-@generated function Base.getindex(A::MutableRecursiveMatrix{T,M,N,L}, i::BlockIndex{T,cutoff,cutoff,cutoff2}) where {T,M,N,L}
-    quote 
-        Base.@_inline_meta
-        Base.unsafe_load(convert_point(A) + i.i)
-    end
+function Base.getindex(A::MutableRecursiveMatrix{T,M,N,L}, i::BlockIndex{T,cutoff,cutoff,cutoff2}) where {T,M,N,L}
+    Base.@_inline_meta
+    Base.unsafe_load(convert_point(A) + i.i)
 end
+
+"""
+The setindex methods don't work too well...
+"""
 @generated function Base.setindex!(A::MutableRecursiveMatrix{T,M,N,L},
                                     val::StaticRecursiveMatrix{T,m,n,mn},
                                     i::BlockIndex{T,m,n,mn}) where {T,M,N,L,m,n,mn}
     quote
         Base.@_inline_meta
-        Base.unsafe_store!(convert_point(A, StaticRecursiveMatrix{T,m,n,mn} ) + i.i, val); nothing
+        Base.unsafe_store!(convert_point(A, StaticRecursiveMatrix{$T,$m,$n,$mn} ) + i.i, val); nothing
     end
 end
-@generated function Base.setindex!(A::MutableRecursiveMatrix{T,M,N,L},
+
+function Base.setindex!(A::MutableRecursiveMatrix{T,M,N,L},
                                     val::StaticRecursiveMatrix{T,cutoff,cutoff,cutoff2},
                                     i::BlockIndex{T,cutoff,cutoff,cutoff2}) where {T,M,N,L}
-    quote
-        Base.@_inline_meta
-        Base.unsafe_store!(convert_point(A) + i.i, val); nothing
-    end
+    Base.@_inline_meta
+    Base.unsafe_store!(convert_point(A) + i.i, val); nothing
+end
+
+@generated function point(A::MutableRecursiveMatrix{T}, i::BlockIndex{T,m,n,mn}) where {T,m,n,mn}
+    :(convert_point(A, StaticRecursiveMatrix{$T,$m,$n,$mn} ) + i.i)
+end
+function point(A::MutableRecursiveMatrix{T}, i::BlockIndex{T,cutoff,cutoff,cutoff2}) where T
+    convert_point(A) + i.i
 end
 
 # function setindex_block_quote(::Type{T}, ::Type{V}, full_m_blocks, mdim, m_r, full_n_blocks, ndim, n_r, m, n) where {T,V}

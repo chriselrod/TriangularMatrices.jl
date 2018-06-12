@@ -285,11 +285,11 @@ end
     extract_linear!(qa, LX, :X)
     extract_linear!(qa, LB, :B)
     extract_linear!(qa, LY, :Y)
-    AX_plus_BY_quote!(qa, T, M, Nax, Nby, P, Val(false), :A, Val(false), :X, :B, :Y, :C, id_symbol, id_symbol, :(=) )
+    AX_plus_BY_quote!(qa, T, M, Nax, Nby, P, Val(false), :A, Val(false), :X, :B, :Y, :D, id_symbol, id_symbol, :(=) )
     # insert_linear!(qa, LC, :C)
     # push!(q.args, :C)
-    LC = M*P
-    push!(q.args, :( StaticRecursiveMatrix{$T,$M,$P,$LC}( Base.Cartesian.@ntuple $LC C ) ))
+    LD = M*P
+    push!(q.args, :( StaticRecursiveMatrix{$T,$M,$P,$LD}( Base.Cartesian.@ntuple $LD D ) ))
     q
 
 end
@@ -308,11 +308,11 @@ end
     extract_linear!(qa, LB, :B)
     extract_linear!(qa, LY, :Y)
     extract_linear!(qa, LD, :D)
-    AX_plus_BY_quote!(qa, T, M, Nax, Nby, P, Val(false), :A, Val(false), :X, :B, :Y, :C, id_symbol, id_symbol, :(+=) )
+    AX_plus_BY_quote!(qa, T, M, Nax, Nby, P, Val(false), :A, Val(false), :X, :B, :Y, :D, id_symbol, id_symbol, :(+=) )
     # insert_linear!(qa, LC, :C)
     # push!(q.args, :C)
     
-    push!(q.args, :( StaticRecursiveMatrix{$T,$M,$P,$LC}( Base.Cartesian.@ntuple $LD D ) ))
+    push!(q.args, :( StaticRecursiveMatrix{$T,$M,$P,$LD}( Base.Cartesian.@ntuple $LD D ) ))
     q
 
 end
@@ -429,7 +429,7 @@ end
     q
 end
 
-@generated function Base.:*(A::StaticRecursiveMatrix{T,M,N,LA}, B::StaticRecursiveMatrix{T,N,P,LB}) where {T,M,N,P,LA,LB}
+@generated function Base.:*(A::StaticRecursiveMatrix{T,M,N,LA}, X::StaticRecursiveMatrix{T,N,P,LX}) where {T,M,N,P,LA,LX}
     q, qa = create_quote()
     @static if VERSION > v"0.7-"
         pushfirst!(q.args, :(Base.@_inline_meta))
@@ -437,14 +437,14 @@ end
         insert!(q.args, 1, :(Base.@_inline_meta))
     end
     extract_linear!(qa, LA, :A)
-    extract_linear!(qa, LB, :B)
-    broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :B, :C, id_symbol, id_symbol, :(=) )
+    extract_linear!(qa, LX, :X)
+    broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :X, :D, id_symbol, id_symbol, :(=) )
     # insert_linear!(qa, LC, :C)
     
     # push!(q.args, :C)
     # q
-    LC = M*P
-    push!(q.args, :( StaticRecursiveMatrix{$T,$M,$P,$LC}( Base.Cartesian.@ntuple $LC C ) ))
+    LD = M*P
+    push!(q.args, :( StaticRecursiveMatrix{$T,$M,$P,$LD}( Base.Cartesian.@ntuple $LD D ) ))
     q
 end
 
@@ -593,7 +593,7 @@ function AX_plus_BY_plus_CZ_quote!(qa, ::Type{T}, M, Nax, Nby, Ndz, P,
 end
 
 
-function mul_kernel(::Type{T}, M, N, P, tA=Val{false}(), tB=Val{false}(), eq = :(=), LA = M*N, LB = N*P, LC = M*P) where T
+function mul_kernel(::Type{T}, M, N, P, tA=Val{false}(), tX=Val{false}(), eq = :(=), LA = M*N, LX = N*P, LD = M*P) where T
     q, qa = create_quote()
     @static if VERSION > v"0.7-"
         pushfirst!(q.args, :(Base.@_inline_meta))
@@ -601,13 +601,61 @@ function mul_kernel(::Type{T}, M, N, P, tA=Val{false}(), tB=Val{false}(), eq = :
         insert!(q.args, 1, :(Base.@_inline_meta))
     end
     extract_linear!(qa, LA, :A)
-    extract_linear!(qa, LB, :B)
-    broadcast_mul_quote!(qa, T, M, N, P, tA, :A, tB, :B, :C, id_symbol, id_symbol, eq )
-    insert_linear!(qa, LC, :C)
+    extract_linear!(qa, LX, :X)
+    broadcast_mul_quote!(qa, T, M, N, P, tA, :A, tX, :X, :D, id_symbol, id_symbol, eq )
+    insert_linear!(qa, LD, :D)
     # isa(dummy, Bool) || push!(q.args, :C) # worth considering?
-    push!(q.args, :C)
+    push!(q.args, :D)
     q
 end
+
+
+
+# """
+# Making this generated makes this faster for some reason on 0.6???
+# """
+# @generated function AXv2!(D, di::BlockIndex{T,mad,pxd,mp}, A, ai::BlockIndex{T,mad,nax,mn}, X, xi::BlockIndex{T,nax,pxd,np}) where {T,mad,pxd,mp,nax,mn,np}
+#     # mulandset(D, di::BlockIndex, , )
+#     # D[di] = A[ai] * X[xi]
+#     quote
+#         pa = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{$T,$mad,$nax,$mn}}, pointer_from_objref(A)) + ai.i
+#         px = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{$T,$nax,$pxd,$np}}, pointer_from_objref(X)) + xi.i
+#         pd = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{$T,$mad,$pxd,$mp}}, pointer_from_objref(D)) #+ di.i
+
+#         Base.unsafe_store!(pd, unsafe_load(pa) * unsafe_load(px) )
+#         nothing
+#     end
+# end
+# function AXv3!(D, di::BlockIndex{Float64,cutoff,cutoff,cutoff2}, A, ai::BlockIndex{Float64,cutoff,cutoff,cutoff2}, X, xi::BlockIndex{Float64,cutoff,cutoff,cutoff2})
+#     # mulandset(D, di::BlockIndex, , )
+#     # D[di] = A[ai] * X[xi]
+#     # pa = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{Float64,cutoff,cutoff,cutoff2}}, pointer_from_objref(A)) 
+#     # px = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{Float64,cutoff,cutoff,cutoff2}}, pointer_from_objref(X))
+#     # pd = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{Float64,cutoff,cutoff,cutoff2}}, pointer_from_objref(D))
+
+#     # Base.unsafe_store!(pd + di.i, unsafe_load(pa + ai.i) * unsafe_load(px + xi.i) )
+#     pa = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{Float64,cutoff,cutoff,cutoff2}}, pointer_from_objref(A)) + ai.i
+#     px = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{Float64,cutoff,cutoff,cutoff2}}, pointer_from_objref(X)) + xi.i
+#     pd = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{Float64,cutoff,cutoff,cutoff2}}, pointer_from_objref(D))  #+ di.i
+
+#     Base.unsafe_store!(pd, unsafe_load(pa) * unsafe_load(px) )
+#     nothing
+# end
+# function AXv4!(ptr, A, ai::BlockIndex{Float64,cutoff,cutoff,cutoff2}, X, xi::BlockIndex{Float64,cutoff,cutoff,cutoff2})
+#     # mulandset(D, di::BlockIndex, , )
+#     # D[di] = A[ai] * X[xi]
+#     # pa = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{Float64,cutoff,cutoff,cutoff2}}, pointer_from_objref(A)) 
+#     # px = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{Float64,cutoff,cutoff,cutoff2}}, pointer_from_objref(X))
+#     # pd = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{Float64,cutoff,cutoff,cutoff2}}, pointer_from_objref(D))
+
+#     # Base.unsafe_store!(pd + di.i, unsafe_load(pa + ai.i) * unsafe_load(px + xi.i) )
+#     pa = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{Float64,cutoff,cutoff,cutoff2}}, pointer_from_objref(A)) + ai.i
+#     px = Base.unsafe_convert(Ptr{StaticRecursiveMatrix{Float64,cutoff,cutoff,cutoff2}}, pointer_from_objref(X)) + xi.i
+
+#     Base.unsafe_store!(ptr, unsafe_load(pa) * unsafe_load(px) )
+#     nothing
+# end
+
 
 """
 These are a list of wrappers.
@@ -615,37 +663,78 @@ The idea is that all the calls inside them get inlined, and the compiler should 
 But they probably shouldn't be inlined to the calling function.
 Currently, I have not annotated them with `@noinline`, because there are use cases where maybe it is appropriate to inline them.
 Right now, I am trusting the compiler not to.
+
+Passing in a pointer that we store the results into seems to satisfy the aliasing checks.
+Calculating the pointer within this function, however fails.
+
+Now, I think proper aliasing checks should be perfectly happy with both versions, because
+even were the separate pointers to alias, the instructions quite clearly indicate to load
+them separately onto the stack, then perform the calculations with the copies.
+
+Perhaps it matters if the compiler wants the freedom to rearrange loading and storing data?
 """
-function AX!(D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex)
-    D[di] = A[ai] * X[xi]
+function AX!(ptrd, A, ai::BlockIndex, X, xi::BlockIndex)
+    # mulandset(D, di::BlockIndex, , )
+    Base.unsafe_store!(ptrd, A[ai] * X[xi])
     nothing
 end
-function AX_plus_D!(D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex)
-    D[di] = AX_plus_D(D[di], A[ai], X[xi])
+function AX_plus_D!(ptrd, D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex)
+    Base.unsafe_store!(ptrd, AX_plus_D(D[di], A[ai], X[xi]))
     nothing
 end
-function AX_plus_BY!(D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex,
+function AX_plus_BY!(ptrd, A, ai::BlockIndex, X, xi::BlockIndex,
                                         B, bi::BlockIndex, Y, yi::BlockIndex)
-    D[di] = AX_plus_BY(A[ai], X[xi], B[bi], Y[yi])
+    Base.unsafe_store!(ptrd, AX_plus_BY(A[ai], X[xi], B[bi], Y[yi]))
     nothing
 end
-function AX_plus_BY_plus_D!(D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex,
-                                               B, bi::BlockIndex, Y, yi::BlockIndex)
-    D[di] = AX_plus_BY_plus_D(D[di], A[ai], X[xi], B[bi], Y[yi])
+function AX_plus_BY_plus_D!(ptrd, D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex,
+                                                B, bi::BlockIndex, Y, yi::BlockIndex)
+    Base.unsafe_store!(ptrd, AX_plus_BY_plus_D(D[di], A[ai], X[xi], B[bi], Y[yi]))
     nothing
 end
-function AX_plus_BY_plus_CZ!(D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex,
+function AX_plus_BY_plus_CZ!(ptrd, A, ai::BlockIndex, X, xi::BlockIndex,
                                                 B, bi::BlockIndex, Y, yi::BlockIndex,
                                                 C, ci::BlockIndex, Z, zi::BlockIndex)
-    D[di] = AX_plus_BY_plus_CZ(A[ai], X[xi], B[bi], Y[yi], C[ci], Z[zi])
+    Base.unsafe_store!(ptrd, AX_plus_BY_plus_CZ(A[ai], X[xi], B[bi], Y[yi], C[ci], Z[zi]))
     nothing
 end
-function AX_plus_BY_plus_plus_CZ_D!(D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex,
-                                                       B, bi::BlockIndex, Y, yi::BlockIndex,
-                                                       C, ci::BlockIndex, Z, zi::BlockIndex)
-    D[di] = AX_plus_BY_plus_CZ_D(D[di], A[ai], X[xi], B[bi], Y[yi], C[ci], Z[zi])
+function AX_plus_BY_plus_plus_CZ_D!(ptrd, D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex,
+                                                        B, bi::BlockIndex, Y, yi::BlockIndex,
+                                                        C, ci::BlockIndex, Z, zi::BlockIndex)
+    Base.unsafe_store!(ptrd, AX_plus_BY_plus_CZ_D(D[di], A[ai], X[xi], B[bi], Y[yi], C[ci], Z[zi]))
     nothing
 end
+# function AX!(D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex)
+#     # mulandset(D, di::BlockIndex, , )
+#     D[di] = A[ai] * X[xi]
+#     nothing
+# end
+# function AX_plus_D!(D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex)
+#     D[di] = AX_plus_D(D[di], A[ai], X[xi])
+#     nothing
+# end
+# function AX_plus_BY!(D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex,
+#                                         B, bi::BlockIndex, Y, yi::BlockIndex)
+#     D[di] = AX_plus_BY(A[ai], X[xi], B[bi], Y[yi])
+#     nothing
+# end
+# function AX_plus_BY_plus_D!(D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex,
+#                                                 B, bi::BlockIndex, Y, yi::BlockIndex)
+#     D[di] = AX_plus_BY_plus_D(D[di], A[ai], X[xi], B[bi], Y[yi])
+#     nothing
+# end
+# function AX_plus_BY_plus_CZ!(D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex,
+#                                                 B, bi::BlockIndex, Y, yi::BlockIndex,
+#                                                 C, ci::BlockIndex, Z, zi::BlockIndex)
+#     D[di] = AX_plus_BY_plus_CZ(A[ai], X[xi], B[bi], Y[yi], C[ci], Z[zi])
+#     nothing
+# end
+# function AX_plus_BY_plus_plus_CZ_D!(D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex,
+#                                                         B, bi::BlockIndex, Y, yi::BlockIndex,
+#                                                         C, ci::BlockIndex, Z, zi::BlockIndex)
+#     D[di] = AX_plus_BY_plus_CZ_D(D[di], A[ai], X[xi], B[bi], Y[yi], C[ci], Z[zi])
+#     nothing
+# end
 
 """
 This kernel does a blocked multiplication.
@@ -654,15 +743,20 @@ It gets called when size is <= 3cutoff
 A problem I see at the moment is that we are repeatedly loading the same StaticRecursiveMatrices from the heap onto the stack.
 So I need to find a clever way of addressing this without having to copy too much in memory between function calls,
     and without letting any functions grow too large.
+
+An alternative formulation would be to load all the sub-blocks once, and then use a series of let blocks?
+
+
+Also, I do need to type on which D block I am inserting elements into...
 """
-function block_kernel(M, N, P, tA::Val{false}, tX::Val{false}, eq = :(=), LA = M*N, LX = N*P, LD = M*P)
+function block_kernel(::Type{T}, M, N, P, tA::Val{false}, tX::Val{false}, eq = :(=), LA = M*N, LX = N*P, LD = M*P) where T
     q, qa = create_quote()
 
     halfcutoff = cutoff ÷ 2
 
     Mblocks = cld(M, cutoff)
     Nblocks = cld(N, cutoff)
-    Pblocks = cld(P, halfcutoff) #We split these down to 
+    Pblocks = cld(P, cutoff) #We split these down to 
     
     # 
     # I want this sequence of calls to be for the same method
@@ -679,79 +773,62 @@ function block_kernel(M, N, P, tA::Val{false}, tX::Val{false}, eq = :(=), LA = M
             for p = 1:Pblocks, m = 1:Mblocks, h = 1:2
                 # dynamic dispatch to (Half)Block and (Half)BlockIndex...
                 # Should come up with a better way of doing this.
-                push!(qa, :(AX!(D, $(HalfBlockIndex(DT, HalfBlock(m,p,h))),
-                                A,     $(BlockIndex(DA, Block(m,1))),
-                                X, $(HalfBlockIndex(DX, HalfBlock(1,p,h))))) )
+                push!(qa, :(AX!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
+                                A, $(BlockIndex(DA, Block(m,1))),
+                                X, $(BlockIndex(DX, HalfBlock(1,p,h))))) )
             end
         else #eq == :(+=) # assuming; anything else would have to be implemented
             for p = 1:Pblocks, m = 1:Mblocks, h = 1:2
-                push!(qa, :(AX_plus_D!(D, $(HalfBlockIndex(DT, HalfBlock(m,p,h))),
-                                       A,     $(BlockIndex(DA, Block(m,1))),
-                                       X, $(HalfBlockIndex(DX, HalfBlock(1,p,h))))) )
+                push!(qa, :(AX_plus_D!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
+                                        D, $(BlockIndex(DT, HalfBlock(m,p,h))),
+                                       A, $(BlockIndex(DA, Block(m,1))),
+                                       X, $(BlockIndex(DX, HalfBlock(1,p,h))))) )
             end
         end
     elseif Nblocks == 2
         if eq == :(=)
             for p = 1:Pblocks, m = 1:Mblocks, h = 1:2
-                push!(qa, :(AX_plus_BY!(D, $(HalfBlockIndex(DT, HalfBlock(m,p,h))),
-                                A,     $(BlockIndex(DA, Block(m,1))),
-                                X, $(HalfBlockIndex(DX, HalfBlock(1,p,h))),
-                                B,     $(BlockIndex(DA, Block(m,2))),
-                                Y, $(HalfBlockIndex(DX, HalfBlock(2,p,h))) )) )
+                push!(qa, :(AX_plus_BY!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
+                                A, $(BlockIndex(DA, Block(m,1))),
+                                X, $(BlockIndex(DX, HalfBlock(1,p,h))),
+                                A, $(BlockIndex(DA, Block(m,2))),
+                                X, $(BlockIndex(DX, HalfBlock(2,p,h))) )) )
             end
         else #eq == :(+=) # assuming; anything else would have to be implemented
             for p = 1:Pblocks, m = 1:Mblocks, h = 1:2
-                push!(qa, :(AX_plus_BY_plus_D!(D, $(HalfBlockIndex(DT, HalfBlock(m,p,h))),
-                                A,     $(BlockIndex(DA, Block(m,1))),
-                                X, $(HalfBlockIndex(DX, HalfBlock(1,p,h))),
-                                B,     $(BlockIndex(DA, Block(m,2))),
-                                Y, $(HalfBlockIndex(DX, HalfBlock(2,p,h))) )) )
+                push!(qa, :(AX_plus_BY_plus_D!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
+                                D, $(BlockIndex(DT, HalfBlock(m,p,h))),
+                                A, $(BlockIndex(DA, Block(m,1))),
+                                X, $(BlockIndex(DX, HalfBlock(1,p,h))),
+                                A, $(BlockIndex(DA, Block(m,2))),
+                                X, $(BlockIndex(DX, HalfBlock(2,p,h))) )) )
             end
         end
     else #Nblocks == 3
         if eq == :(=)
             for p = 1:Pblocks, m = 1:Mblocks, h = 1:2
-                push!(qa, :(AX_plus_BY_plus_CZ!(D, $(HalfBlockIndex(DT, HalfBlock(m,p,h))),
-                                A,     $(BlockIndex(DA, Block(m,1))),
-                                X, $(HalfBlockIndex(DX, HalfBlock(1,p,h))),
-                                B,     $(BlockIndex(DA, Block(m,2))),
-                                Y, $(HalfBlockIndex(DX, HalfBlock(2,p,h))),
-                                C,     $(BlockIndex(DA, Block(m,3))),
-                                Z, $(HalfBlockIndex(DX, HalfBlock(3,p,h))) )) )
+                push!(qa, :(AX_plus_BY_plus_CZ!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
+                                A, $(BlockIndex(DA, Block(m,1))),
+                                X, $(BlockIndex(DX, HalfBlock(1,p,h))),
+                                A, $(BlockIndex(DA, Block(m,2))),
+                                X, $(BlockIndex(DX, HalfBlock(2,p,h))),
+                                A, $(BlockIndex(DA, Block(m,3))),
+                                X, $(BlockIndex(DX, HalfBlock(3,p,h))) )) )
             end
         else #eq == :(+=) # assuming; anything else would have to be implemented
             for p = 1:Pblocks, m = 1:Mblocks, h = 1:2
-                push!(qa, :(AX_plus_BY_plus_CZ_plus_D!(D, $(HalfBlockIndex(DT, HalfBlock(m,p,h))),
-                                A,     $(BlockIndex(DA, Block(m,1))),
-                                X, $(HalfBlockIndex(DX, HalfBlock(1,p,h))),
-                                B,     $(BlockIndex(DA, Block(m,2))),
-                                Y, $(HalfBlockIndex(DX, HalfBlock(2,p,h))),
-                                C,     $(BlockIndex(DA, Block(m,3))),
-                                Z, $(HalfBlockIndex(DX, HalfBlock(3,p,h))) )) )
+                push!(qa, :(AX_plus_BY_plus_CZ_plus_D!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
+                                D, $(BlockIndex(DT, HalfBlock(m,p,h))),
+                                A, $(BlockIndex(DA, Block(m,1))),
+                                X, $(BlockIndex(DX, HalfBlock(1,p,h))),
+                                A, $(BlockIndex(DA, Block(m,2))),
+                                X, $(BlockIndex(DX, HalfBlock(2,p,h))),
+                                A, $(BlockIndex(DA, Block(m,3))),
+                                X, $(BlockIndex(DX, HalfBlock(3,p,h))) )) )
             end
         end
     end
     q
-end
-function blockmull4x4()
-
-
-end
-function blockmull2x4()
-
-
-end
-function blockmull4x2()
-
-
-end
-function blockmull2x2_out1()
-
-
-end
-function blockmull2x2_out4()
-
-
 end
 
 
@@ -765,29 +842,110 @@ Woah -- hold up. Total N lines up.
 So, if one of them isn't reasonably square...how about we just split it until it is, and don't split the other at all?
 Doi.
 """
-function recursion_mul(M, N, P, tA::Val{false}=Val(false), tB::Val{false}=Val(false),
-                                eq = :(=), LA = M*N, LB = N*P, LC = M*P)
+function recursion_mul(::Type{T}, M, N, P, tA::Val{false}=Val(false), tX::Val{false}=Val(false),
+                                eq = :(=), LA = M*N, LX = N*P, LD = M*P) where T
 
     # M1, M2 = split_dim(M)
     # N1, N2 = split_dim(N)
     # P1, P2 = split_dim(P)
 
+    q, qa = create_quote()
+
+    A_square = reasonably_square(M, N)
+    X_square = reasonably_square(N, P)
+
+    if A_square && X_square
+        # we split each once.
+        M1, M2 = split_dim(M)
+        N1, N2 = split_dim(N)
+        P1, P2 = split_dim(P)
+        s = sizeof(T)
+
+        push!(qa, quote
+            pd = convert_point(D)
+            pa = convert_point(A)
+            px = convert_point(X)
+            ptr_d11 = PointerRecursiveMatrix{$T,$M1,$P1,$(M1*P1)}(pd)
+            ptr_a11 = PointerRecursiveMatrix{$T,$M1,$N1,$(M1*N1)}(pa)
+            ptr_x11 = PointerRecursiveMatrix{$T,$N1,$P1,$(N1*P1)}(px)
+            mul!( ptr_d11, ptr_a11, ptr_x11 )
+            ptr_a12 = PointerRecursiveMatrix{$T,$M1,$N2,$(M1*N2)}(pa + $(s*M *N1))
+            ptr_x21 = PointerRecursiveMatrix{$T,$N2,$P1,$(N2*P1)}(px + $(s*N1*P1))
+            gemm!( ptr_d11, ptr_a12, ptr_x21 )
+
+            ptr_d21 = PointerRecursiveMatrix{$T,$M2,$P1,$(M2*P1)}(pd + $(s*M1*P1))
+            ptr_a21 = PointerRecursiveMatrix{$T,$M2,$N1,$(M2*N1)}(pa + $(s*M1*N1))
+            mul!( ptr_d21, ptr_a21, ptr_x11 )
+            ptr_a22 = PointerRecursiveMatrix{$T,$M2,$N2,$(M2*N2)}(pa + $(s*(M *N1 + M1*N2)))
+            gemm!( ptr_d21, ptr_a22, ptr_x21 )
+
+
+            ptr_d12 = PointerRecursiveMatrix{$T,$M1,$P2,$(M1*P2)}(pd + $(s*M*P1))
+            ptr_x12 = PointerRecursiveMatrix{$T,$N1,$P2,$(N1*P2)}(px + $(s*N*P1))
+            mul!( ptr_d12, ptr_a11, ptr_x12 )
+            ptr_x22 = PointerRecursiveMatrix{$T,$N2,$P2,$(N2*P2)}(px + $(s*(N*P1+N1*P2)))
+            gemm!( ptr_d12, ptr_a12, ptr_x22 )
 
 
 
-    A_blocks = block_dim(M, N)
-    B_blocks = block_dim(N, P)
-    while size(A_blocks,2) < size(B_blocks,1) # should be equal, but under certain "pathological" cases they may not be.
-        A_blocks = split_col(A_blocks)
+            ptr_d22 = PointerRecursiveMatrix{$T,$M2,$P2,$(M2*P2)}(pd + $(s*(M*P1 + M1*P2)))
+            mul!( ptr_d22, ptr_a21, ptr_x12 )
+            gemm!( ptr_d22, ptr_a22, ptr_x22 )
+            nothing
+        end)
+
+    elseif A_square # X is not square, A is
+        if N > P
+            # then N is the dimension getting split.
+            # So we split X, and proceed.
+
+        else
+            # P is the dimension getting split. This means we must split P, until X is reasonably square.
+            # We can stop then, without actually splitting A.
+
+        end
+    elseif X_square # A is not square, X is
+        if N > M
+            # N is the dimension getting split.
+            # So we split A, and proceed.
+        else
+            # We now split A until it becomes reasonably square.
+            # We do not split X, but instead carry out the multiplication (recursion)
+            # as soon A becomes square.
+
+        end
+    else # neither A or B are square
+        if (M > N) && (N < P)
+            # We can split both until they become square, or perhaps just once.
+            # Then carry out the multiplication.
+
+        elseif (M < N) && (N > P)
+            # We can split until the first of them becomes square
+            # then proceed with the recursion.
+
+        elseif (M > N) && (N > P)
+            # We split A until it becomes reasonably square.
+
+        else # (M < N) && (N < P)
+            # We split X until it becomes reasonably square.
+
+        end
     end
-    while size(A_blocks,2) > size(B_blocks,1)
-        B_blocks = split_row(B_blocks)
-    end
-    # The matrices should now line up.
-    # Is it possible that they don't?
+
+    # A_blocks = block_dim(M, N)
+    # B_blocks = block_dim(N, P)
+    # while size(A_blocks,2) < size(B_blocks,1) # should be equal, but under certain "pathological" cases they may not be.
+    #     A_blocks = split_col(A_blocks)
+    # end
+    # while size(A_blocks,2) > size(B_blocks,1)
+    #     B_blocks = split_row(B_blocks)
+    # end
+    # # The matrices should now line up.
+    # # Is it possible that they don't?
     
-    # Now, we multiply their blocks.
+    # # Now, we multiply their blocks.
 
+    return q
 
 end
 
@@ -797,17 +955,18 @@ The dummy argument always gets optimized out.
 However, when using code_llvm on the function and filling it with a real type (eg, Bool), it causes the SSA names to get incremented by 1 (they start as %0 for the first argument, %1 for the second...). In llvmcall, these values get incremented by one between the first in the body and the argument list, while they do not in the function code returned by llvmcall.
 Maybe there is a solution that is less of a hack, but just passing an extra dummy argument to the code_llvm call to get them to line up was a simple solution.
 """
-@generated function mul!(C::RecursiveMatrixOrTranpose{T,M,P,LC},
-                        A::RecursiveMatrixOrTranpose{T,M,N,LA},
-                        B::RecursiveMatrixOrTranpose{T,N,P,LB}) where {T,M,N,P,LA,LB,LC}
+@generated function mul!(D::MutableRecursiveMatrix{T,M,P,LD},
+                        A::MutableRecursiveMatrix{T,M,N,LA},
+                        X::MutableRecursiveMatrix{T,N,P,LX}) where {T,M,N,P,LA,LX,LD}
                         #dummy = Nothing) where {T,M,N,P,LA,LB,LC}
     maxdim = max(M,N,P)
+    # maxdim = max(M,P,N)
     if maxdim <= cutoff # No recursion; we multiply.
-        return mul_kernel(T,M,N,P, vistransposed(A), vistransposed(B))
+        return mul_kernel(T,M,N,P, vistransposed(A), vistransposed(X))
     elseif maxdim <= 3cutoff
-        return block_kernel(M,N,P, vistransposed(A), vistransposed(B))
+        return block_kernel(T,M,N,P, vistransposed(A), vistransposed(X))
     else # Recursion.
-        return recursion_mul(M,N,P, vistransposed(A), vistransposed(B))
+        return recursion_mul(T,M,N,P, vistransposed(A), vistransposed(X))
     end
 end
 
@@ -819,28 +978,31 @@ Unlike C/C++, which have `restrict` compiler hints (or Fortran which simply assu
 there's no way for us to make that promise to the compiler. So, instead, the approach is to use `code_llvm`
 for the corresponding types where aliasing isn't possible, and then use this code with `llvmcall`.
 """
-@generated function mul!(C::RecursivePointerMatrixOrTranpose{T,M,P,LC},
-                        A::RecursivePointerMatrixOrTranpose{T,M,N,LA},
-                        B::RecursivePointerMatrixOrTranpose{T,N,P,LB},
-                        dummy = Nothing) where {T,M,N,P,LA,LB,LC}
-    iobuffer = IOBuffer()
-    code_llvm(iobuffer, mul!, (dereftype(C), dereftype(A), dereftype(B), Bool))
-    kernel_code = String(iobuffer)
-    codestart = search(mulstring,"{\ntop:\n ")[end]
-    quote
-        Base.llvmcall($(kernel_code[codestart:end-3]), Ptr{$T}, Tuple{Ptr{$T},Ptr{$T},Ptr{$T}}, C.data, A.data, B.data)
-        C
-    end
-end
+# @generated function mul!(C::RecursivePointerMatrixOrTranpose{T,M,P,LC},
+#                         A::RecursivePointerMatrixOrTranpose{T,M,N,LA},
+#                         B::RecursivePointerMatrixOrTranpose{T,N,P,LB},
+#                         dummy = Nothing) where {T,M,N,P,LA,LB,LC}
+#     iobuffer = IOBuffer()
+#     code_llvm(iobuffer, mul!, (dereftype(C), dereftype(A), dereftype(B), Bool))
+#     kernel_code = String(iobuffer)
+#     codestart = search(mulstring,"{\ntop:\n ")[end]
+#     quote
+#         Base.llvmcall($(kernel_code[codestart:end-3]), Ptr{$T}, Tuple{Ptr{$T},Ptr{$T},Ptr{$T}}, C.data, A.data, B.data)
+#         C
+#     end
+# end
 
-@generated function gemm!(C::RecursiveMatrixOrTranpose{T,M,P,LC},
-                        A::RecursiveMatrixOrTranpose{T,M,N,LA},
-                        B::RecursiveMatrixOrTranpose{T,N,P,LB},
-                        dummy = Nothing) where {T,M,N,P,LA,LB,LC}
-    if M*N < abs2(cutoff) && N*P < abs2(cutoff) # No recursion; we multiply.
-        return mul_kernel(M, N, P, vistransposed(A), vistransposed(B), :(+=) )
+@generated function gemm!(D::MutableRecursiveMatrix{T,M,P,LD},
+                        A::MutableRecursiveMatrix{T,M,N,LA},
+                        X::MutableRecursiveMatrix{T,N,P,LX}) where {T,M,N,P,LA,LX,LD}
+    # maxdim = max(M,N,P) # two orders, so we can easily force generated function to rerun =P
+    maxdim = max(M,P,N)
+    if maxdim <= cutoff # No recursion; we multiply.
+        return mul_kernel(T,M,N,P, vistransposed(A), vistransposed(X), :(+=))
+    elseif maxdim <= 3cutoff
+        return block_kernel(T,M,N,P, vistransposed(A), vistransposed(X), :(+=))
     else # Recursion.
-        return block_kernel(M,N,P, vistransposed(A), vistransposed(B), :(+=) )
+        return recursion_mul(T,M,N,P, vistransposed(A), vistransposed(X), :(+=))
     end
 end
 
