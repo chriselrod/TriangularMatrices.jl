@@ -212,19 +212,20 @@ end
     out
 end
 
-@generated function Base.getindex(A::RecursiveMatrixOrTranpose{T,M,N,L}, i::Int, j::Int) where {T,M,N,L}
-    bounds_error_string = "($M, $N) array at index (\$i,\$j)."
-    if istransposed(A)
-        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), j, i))
-    else
-        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), i, j))
-    end
-    quote 
-        # Base.@_inline_meta
-        @boundscheck ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
-        A.data[$linear_ind_expr]
-    end
-end
+Base.getindex(A::RecursiveMatrixOrTranpose{T,M,N}, i::Int, j::Int) where {T,M,N} = A.data[dense_sub2ind((M,N),i,j)]
+# @generated function Base.getindex(A::RecursiveMatrixOrTranpose{T,M,N,L}, i::Int, j::Int) where {T,M,N,L}
+#     bounds_error_string = "($M, $N) array at index (\$i,\$j)."
+#     if istransposed(A)
+#         linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), j, i))
+#     else
+#         linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), i, j))
+#     end
+#     quote 
+#         # Base.@_inline_meta
+#         @boundscheck ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
+#         A.data[$linear_ind_expr]
+#     end
+# end
 # function getindex_block_quote(::Type{T}, full_m_blocks, mdim, m_r, full_n_blocks, ndim, n_r, m, n) where T
 #     if m <= full_m_blocks && n <= full_n_blocks
 #         Lout = mdim*ndim
