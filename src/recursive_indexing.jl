@@ -7,11 +7,11 @@ The current behavior is to try and get dimensions into primarily blocks of 8.
 """
 function split_dim(N)
     N <= cutoff && return N, 0
-    number_eight_blocks, remainder = divrem(N,8)
+    number_cutoff_blocks, remainder = divrem(N,cutoff)
 
-    half_of_eight_blocks, odd = divrem(number_eight_blocks, 2)
+    half_of_cutoff_blocks, odd = divrem(number_cutoff_blocks, 2)
 
-    8(half_of_eight_blocks+odd), 8half_of_eight_blocks + remainder
+    8(half_of_cutoff_blocks+odd), 8half_of_cutoff_blocks + remainder
 end
 
 function reasonably_square(mindim, maxdim)
@@ -86,7 +86,7 @@ function dense_sub2ind(dims::NTuple{2}, i, j, offset = 0)
     else #divide N
         N1, N2 = split_dim(N)
         if j <= N1
-            return dense_sub2ind( (M, N1), i, j, offset, joffset)
+            return dense_sub2ind( (M, N1), i, j, offset)
         else
             return dense_sub2ind( (M, N2), i, j - N1, offset + M * N1)
         end
@@ -143,14 +143,14 @@ function dense_recursion_quote(q, M, N, linear_offset = 0, row_offset = 0, colum
             end)
     elseif M > N # we are splitting the matrix into two blocks stacked on top of one another.
         M1, M2 = split_dim(M)
-        return :(if i < $(M1 + row_offset)
+        return :(if i <= $(M1 + row_offset)
                 $(dense_recursion_quote(q, M1, N, linear_offset, row_offset, column_offset))
             else
                 $(dense_recursion_quote(q, M2, N, linear_offset + M1 * N, row_offset + M1, column_offset))
             end)
     else # we are splitting the matrix into two blocks, side by side.
         N1, N2 = split_dim(N)
-        return :(if j < $(N1 + column_offset)
+        return :(if j <= $(N1 + column_offset)
                 $(dense_recursion_quote(q, M, N1, linear_offset, row_offset, column_offset))
             else
                 $(dense_recursion_quote(q, M, N2, linear_offset + M * N1, row_offset, column_offset + N1))
@@ -171,41 +171,11 @@ The approach for sub2ind here incurs branches, which would disable SIMD.
 Therefore, Cartesian indexing is strongly discouraged for hot loops.
 Still, it is reasonably fast -- only a handful of ns.
 """
-@generated dense_sub2ind(::Val{M}, ::Val{N}, i, j) where {N,M} = dense_sub2ind_quote(M, N)
+# @generated dense_sub2ind(::Val{M}, ::Val{N}, i, j) where {N,M} = dense_sub2ind_quote(M, N)
+@generated function dense_sub2ind(::Val{M}, ::Val{N}, i, j) where {N,M}
+    dense_sub2ind_quote(M, N)
+end
 
-
-# function dense_sub2ind_quote(M, N, offset = 0, ioffset = 0, joffset = 0)
-#     minind, maxind = minmax(M, N)
-#     maxind <= cutoff && return :( (j-$(joffset+1) ) * $M + i + $(offset-ioffset) )
-    
-#     if reasonably_square(minind, maxind) && minind > cutoff # we divide the matrix into four blocks.
-#         M1, M2 = split_dim(M)
-#         N1, N2 = split_dim(N)
-#         return :(if i <= $(M1 + ioffset) && j <= $(N1 + joffset) # enter block 1
-#                 $(dense_sub2ind_quote(M1, N1, offset, ioffset, joffset))
-#             elseif j <= $(N1 + joffset) # enter block 2
-#                 $(dense_sub2ind_quote(M2, N1, offset + M1 * N1, ioffset + M1, joffset))
-#             elseif i <= $(M1 + ioffset) # enter block 3
-#                 $(dense_sub2ind_quote(M1, N2, offset + M * N1, ioffset, joffset + N1))
-#             else # enter block 4
-#                 $(dense_sub2ind_quote(M2, N2, offset + M * N1 + M1 * N2, ioffset + M1, joffset + N1))
-#             end)
-#     elseif M > N # we are splitting the matrix into two blocks stacked on top of one another.
-#         M1, M2 = split_dim(M)
-#         return :(if i < $(M1 + ioffset)
-#                 $(dense_sub2ind_quote(M1, N, offset, ioffset, joffset))
-#             else
-#                 $(dense_sub2ind_quote(M2, N, offset + M1 * N, ioffset + M1, joffset))
-#             end)
-#     else # we are splitting the matrix into two blocks, side by side.
-#         N1, N2 = split_dim(N)
-#         return :(if j < $(N1 + joffset)
-#                 $(dense_sub2ind_quote(M, N1, offset, ioffset, joffset))
-#             else
-#                 $(dense_sub2ind_quote(M, N2, offset + M * N1, ioffset, joffset + N1))
-#             end)
-#     end
-# end
 
 
 function triangle_sub2ind(N, i, j, offset = 0)
@@ -216,7 +186,6 @@ function triangle_sub2ind(N, i, j, offset = 0)
     elseif i <= N1 # enter block 3 # square block
         return dense_sub2ind((N1, N2), i, j - N1, offset + big_triangle(N1))
     elseif j <= N1 # enter block 2 #symmetric or 0 block # Not supported; check i, j before calling.
-        # $(dense_sub2ind_quote(M2, N1, offset + M1 * (N1-1), joffset))
         throw("Indexing into this half not supported.")
     else # enter block 4 # triangle / symmetric block
         return triangle_sub2ind(N2, i - N1, j - N1, offset + big_triangle(N1) + N1*N2)
@@ -265,32 +234,12 @@ function triangle_recursion_quote(triangle_q, rectangle_q, N, linear_offset = 0,
             $(triangle_recursion_quote(triangle_q, rectangle_q, N1, linear_offset, row_offset, column_offset))
         elseif i <= $(N1 + row_offset) # enter block 3 # square block
             $(dense_recursion_quote(rectangle_q, N1, N2, linear_offset + big_triangle(N1), row_offset, column_offset + N1))
-        # elseif j <= $N1 # enter block 2 #symmetric or 0 block # Not supported; check i, j before calling.
-        #     # $(dense_sub2ind_quote(M2, N1, offset + M1 * (N1-1), joffset))
-        #     throw("Indexing into this half not supported.")
         else # enter block 4 # triangle / symmetric block
             $(triangle_recursion_quote(triangle_q, rectangle_q, N2,
                 linear_offset + big_triangle(N1) + N1*N2, row_offset + N1, column_offset + N1))
         end)
 
 end
-
-
-# function triangle_sub2ind_quote(N, linear_offset = 0, ioffset = 0 joffset = 0)
-#     N <= cutoff && return :( small_triangle( j-$joffset ) + i + $(offset-ioffset) )
-    
-#     N1, N2 = split_dim(N)
-#     :(if max( i - $ioffset, j - $joffset) <= $N1 # enter block 1 # triangle / symmetric block
-#             $(triangle_sub2ind_quote(N1, offset, ioffset, joffset))
-#         elseif i <= $(N1 + ioffset) # enter block 3 # square block
-#             $(dense_sub2ind_quote(N1, N2, offset + big_triangle(N1), ioffset, joffset + N1))
-#         # elseif j <= $N1 # enter block 2 #symmetric or 0 block # Not supported; check i, j before calling.
-#         #     # $(dense_sub2ind_quote(M2, N1, offset + M1 * (N1-1), joffset))
-#         #     throw("Indexing into this half not supported.")
-#         else # enter block 4 # triangle / symmetric block
-#             $(triangle_sub2ind_quote(N2, offset + big_triangle(N1) + N1*N2, ioffset + N1, joffset + N1))
-#         end)
-# end
 
 function triangle_sub2ind_quote(N)
     triangle_recursion_quote(

@@ -85,6 +85,15 @@ function PointerRecursiveMatrix(parent::RecursiveMatrix{T,MP,NP,LP}, ::Val{M}, :
     )
 end
 
+# Needs to be made faster.
+function Base.Matrix(A::RecursiveMatrix{T,M,N,L}) where {T,M,N,L}
+    out = Matrix{T}(undef, M, N)
+    @inbounds for i = 1:N, j = 1:M
+        out[j,i] = A[j,i]
+    end
+    out
+end
+
 struct Block{m,n} end
 struct HalfBlock{m,n,h} end
 Base.@pure Block(m,n) = Block{m,n}()
@@ -211,7 +220,7 @@ end
         linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), i, j))
     end
     quote 
-        Base.@_inline_meta
+        # Base.@_inline_meta
         @boundscheck ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
         A.data[$linear_ind_expr]
     end
@@ -323,7 +332,7 @@ end
 @generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::I, i::Int) where {T,M,N,L,I<:Integer}
     bounds_error_string = "($M, $N) array at index (\$i,\$j)."
     quote #Add recursion.
-        Base.@_inline_meta
+        # Base.@_inline_meta
         @boundscheck begin
             $L < i && throw(BoundsError($bounds_error_string))
         end
@@ -349,7 +358,7 @@ end
         linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), i, j))
     end
     quote #Add recursion.
-        Base.@_inline_meta
+        # Base.@_inline_meta
         @boundscheck begin
             ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
         end
@@ -368,7 +377,7 @@ end
         linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), i, j))
     end
     quote #Add recursion.
-        Base.@_inline_meta
+        # Base.@_inline_meta
         @boundscheck begin
             ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
         end
@@ -397,42 +406,46 @@ end
 #
 # This function shouldn't really be typed on m,n, or...
 #
-@generated function BlockIndex(::Type{MutableRecursiveMatrix{T,M,N,L}}, ::Block{m,n}) where {T,M,N,L,m,n}
-    full_m_blocks, m_r = divrem(M, cutoff)
+@generated function BlockIndex(::Type{RecursiveMatrix{T,M,N,L}}, ::Block{m,n}) where {T,M,N,L,m,n}
     full_n_blocks, n_r = divrem(N, cutoff)
+    full_m_blocks, m_r = divrem(M, cutoff)
+
+    offset = sizeof(T) * ( dense_sub2ind((M,N), (m-1)*cutoff + 1, (n-1)*cutoff + 1 ) - 1 )
 
     if m <= full_m_blocks && n <= full_n_blocks
-        return BlockIndex{T,cutoff,cutoff,cutoff2}(sizeof(T)*( (m-1)*cutoff2 + (n-1)*M*cutoff) )
+        return BlockIndex{T,cutoff,cutoff,cutoff2}( offset )
     elseif m <= full_m_blocks # we're on the far right
-        return BlockIndex{T,cutoff,n_r,cutoff*n_r}(sizeof(T)*( (m-1)*cutoff*n_r + (n-1)*M*cutoff))
+        return BlockIndex{T,cutoff,n_r,cutoff*n_r}( offset )
     elseif n <= full_n_blocks
-        return BlockIndex{T,m_r,cutoff,m_r*cutoff}(sizeof(T)*( (m-1)*cutoff2 + (n-1)*M*cutoff ) )
+        return BlockIndex{T,m_r,cutoff,m_r*cutoff}( offset )
     else
-        return BlockIndex{T,m_r,n_r,m_r*n_r}(sizeof(T)*( L - m_r*n_r ) )
+        return BlockIndex{T,m_r,n_r,m_r*n_r}( offset )
     end
 end
 
 
-@generated function BlockIndex(::Type{MutableRecursiveMatrix{T,M,N,L}}, ::HalfBlock{m,n,h}) where {T,M,N,L,m,n,h}
-    full_m_blocks, m_r = divrem(M, cutoff)
+@generated function BlockIndex(::Type{RecursiveMatrix{T,M,N,L}}, ::HalfBlock{m,n,h}) where {T,M,N,L,m,n,h}
     full_n_blocks, n_r = divrem(N, cutoff)
+    full_m_blocks, m_r = divrem(M, cutoff)
     
+    offset = sizeof(T) * ( dense_sub2ind((M,N), (m-1)*cutoff + 1, (n-1)*cutoff + (h-1)*halfcutoff + 1 ) - 1 )
+
     if m <= full_m_blocks && n <= full_n_blocks
-        return BlockIndex{T,cutoff,halfcutoff,cutoff*halfcutoff}(sizeof(T)*( (m-1)*cutoff2 + (n-1)*M*cutoff + (h-1)*cutoff*halfcutoff ) )
+        return BlockIndex{T,cutoff,halfcutoff,cutoff*halfcutoff}( offset )
     elseif m <= full_m_blocks # we're on the far right
         ndim = h == 1 ? min(n_r, halfcutoff) : n_r - halfcutoff
-        return BlockIndex{T,cutoff,ndim,cutoff*ndim}(sizeof(T)*( (m-1)*cutoff*n_r + (n-1)*M*cutoff + (h-1)*cutoff*halfcutoff ))
+        return BlockIndex{T,cutoff,ndim,cutoff*ndim}( offset )
     elseif n <= full_n_blocks # we're on the bottom
-        return BlockIndex{T,m_r,cutoff,m_r*cutoff}(sizeof(T)*( (m-1)*cutoff2 + (n-1)*M*cutoff + (h-1)*m_r*halfcutoff ) )
+        return BlockIndex{T,m_r,halfcutoff,m_r*halfcutoff}( offset )
     else
         ndim = h == 1 ? min(n_r, halfcutoff) : n_r - halfcutoff
-        return BlockIndex{T,m_r,ndim,m_r*ndim}(sizeof(T)*( L - m_r*n_r + (h-1)*m_r*halfcutoff ) )
+        return BlockIndex{T,m_r,ndim,m_r*ndim}( offset )
     end
 end
 
 
 
-@generated function Base.getindex(A::MutableRecursiveMatrix{T,M,N,L}, i::BlockIndex{T,m,n,mn}) where {T,M,N,L,m,n,mn}
+@generated function Base.getindex(A::MutableRecursiveMatrix{T}, i::BlockIndex{T,m,n,mn}) where {T,m,n,mn}
     quote 
         Base.@_inline_meta
         Base.unsafe_load(convert_point(A, StaticRecursiveMatrix{$T,$m,$n,$mn} ) + i.i)
@@ -446,9 +459,9 @@ end
 """
 The setindex methods don't work too well...
 """
-@generated function Base.setindex!(A::MutableRecursiveMatrix{T,M,N,L},
+@generated function Base.setindex!(A::MutableRecursiveMatrix{T},
                                     val::StaticRecursiveMatrix{T,m,n,mn},
-                                    i::BlockIndex{T,m,n,mn}) where {T,M,N,L,m,n,mn}
+                                    i::BlockIndex{T,m,n,mn}) where {T,m,n,mn}
     quote
         Base.@_inline_meta
         Base.unsafe_store!(convert_point(A, StaticRecursiveMatrix{$T,$m,$n,$mn} ) + i.i, val); nothing
