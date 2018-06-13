@@ -675,33 +675,33 @@ Perhaps it matters if the compiler wants the freedom to rearrange loading and st
 """
 function AX!(ptrd, A, ai::BlockIndex, X, xi::BlockIndex)
     # mulandset(D, di::BlockIndex, , )
-    Base.unsafe_store!(ptrd, A[ai] * X[xi])
+    @inbounds Base.unsafe_store!(ptrd, A[ai] * X[xi])
     nothing
 end
 function AX_plus_D!(ptrd, D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex)
-    Base.unsafe_store!(ptrd, AX_plus_D(D[di], A[ai], X[xi]))
+    @inbounds Base.unsafe_store!(ptrd, AX_plus_D(D[di], A[ai], X[xi]))
     nothing
 end
 function AX_plus_BY!(ptrd, A, ai::BlockIndex, X, xi::BlockIndex,
                                         B, bi::BlockIndex, Y, yi::BlockIndex)
-    Base.unsafe_store!(ptrd, AX_plus_BY(A[ai], X[xi], B[bi], Y[yi]))
+    @inbounds Base.unsafe_store!(ptrd, AX_plus_BY(A[ai], X[xi], B[bi], Y[yi]))
     nothing
 end
 function AX_plus_BY_plus_D!(ptrd, D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex,
                                                 B, bi::BlockIndex, Y, yi::BlockIndex)
-    Base.unsafe_store!(ptrd, AX_plus_BY_plus_D(D[di], A[ai], X[xi], B[bi], Y[yi]))
+    @inbounds Base.unsafe_store!(ptrd, AX_plus_BY_plus_D(D[di], A[ai], X[xi], B[bi], Y[yi]))
     nothing
 end
 function AX_plus_BY_plus_CZ!(ptrd, A, ai::BlockIndex, X, xi::BlockIndex,
                                                 B, bi::BlockIndex, Y, yi::BlockIndex,
                                                 C, ci::BlockIndex, Z, zi::BlockIndex)
-    Base.unsafe_store!(ptrd, AX_plus_BY_plus_CZ(A[ai], X[xi], B[bi], Y[yi], C[ci], Z[zi]))
+    @inbounds Base.unsafe_store!(ptrd, AX_plus_BY_plus_CZ(A[ai], X[xi], B[bi], Y[yi], C[ci], Z[zi]))
     nothing
 end
 function AX_plus_BY_plus_CZ_plus_D!(ptrd, D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex,
                                                         B, bi::BlockIndex, Y, yi::BlockIndex,
                                                         C, ci::BlockIndex, Z, zi::BlockIndex)
-    Base.unsafe_store!(ptrd, AX_plus_BY_plus_CZ_plus_D(D[di], A[ai], X[xi], B[bi], Y[yi], C[ci], Z[zi]))
+    @inbounds Base.unsafe_store!(ptrd, AX_plus_BY_plus_CZ_plus_D(D[di], A[ai], X[xi], B[bi], Y[yi], C[ci], Z[zi]))
     nothing
 end
 # function AX!(D, di::BlockIndex, A, ai::BlockIndex, X, xi::BlockIndex)
