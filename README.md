@@ -11,333 +11,811 @@
 
 ---
 
+This package should work on both Julia 0.6 and 0.7, but it is dramatically (>2x) faster on 0.7 on my test computer.
+I need clean up the interface, and want to add a few basic LAPACK type functions.
+I should also probably add more thorough tests; currently they just loop through a lot of matrix operations.
+They take some time to run. Compile time subjectively doesn't seem too bad for multiplication, but I'm sure it could be improved.
 
-This package is probably totally broken right now.
-It has been ages since I tried `using` it.
+The tests seem to randomly segfault after a while, and I am not sure why. Could I be filling up the methods table?
+Either way, may be good to cull the amount of things that are parametrically typed.
 
-But here is minimal test code you can run. I am however adding comments on where that code came from.
-You may be especially interested in looking at src/arithmetic/gemm.jl, and looking at all the commented our methods I've tried for generating kernels.
+`getindex` and show methods, however, do not do well.
+
+Regarding LAPACK functionality, I intend to add Cholesky decompositions, triangular matrix inversions, symm, and trmm functions.
+That was the origin of the original name of this library (TriangularMatrices). That name will probably change.
+
+For `gemm` type operations `D = A*X`, it is optimized fairly well for `A` having a multiple of 8 rows.
 ```julia
+using TriangularMatrices, BenchmarkTools
+a8 = randmat(8);
+x8 = randmat(8);
+d8 = randmat(8);
 
-const cutoff = 16
-
-###
-### from meta.jl
-###
-
-extract_symbol(A, i) = :($A[$i])
-id_symbol(A, i) = Symbol(A, :_, i)
-
-
-function create_quote(fast::Bool = true)
-    if fast
-        q = quote @fastmath @inbounds begin end end
-        @static if VERSION > v"0.7-"
-            qa = q.args[2].args[3].args[3].args
-        else
-            qa = q.args[2].args[2].args[2].args
-        end
-    else
-        q = quote @inbounds begin end end
-        @static if VERSION > v"0.7-"
-            qa = q.args[2].args[3].args
-        else
-            qa = q.args[2].args[2].args
-        end
-    end
-    q, qa
-end
-
-function create_quote(A_i, A)
-    q, qa = create_quote()
-    push!(qa, :($A_i = $A[1]))
-    q, qa
-end
-
-function extract_linear!(qa, N, prefix = :B)
-    prefix_ = Symbol(prefix, :_)
-    for i ∈ 1:N
-        push!(qa, :($(Symbol(prefix_, i)) = $(prefix)[$i]))
-    end
-    qa
-end
-function insert_linear!(qa, N, prefix = :B)
-    prefix_ = Symbol(prefix, :_)
-    for i ∈ 1:N
-        push!(qa, :( $(prefix)[$i] = $(Symbol(prefix_, i))) )
-    end
-    qa
-end
-
-@generated ValProd(::Val{M}, ::Val{N}) where {M,N} = Val{M*N}()
-@generated function ValDiv(::Val{L}, ::Val{M}) where {L,M}
-    N, r = divrem(L, M)
-    @assert r == 0
-    Val{N}()
-end
-
-###
-### Recursive indices, not actually needed for the example because we're only looking at the kernels.
-### From src/recursive_indexing.jl
-###
-
-
-function dense_sub2ind_quote(M, N, offset = 0, joffset = 1)
-    minind, maxind = minmax(M, N)
-    maxind < cutoff && return :( (j-$joffset ) * $M + i + $offset )
-    
-    if √2*minind > maxind && minind > cutoff # we divide the matrix into four blocks.
-        Mh, Mr = divrem(M, 2)
-        Nh, Nr = divrem(N, 2)
-        Mh_p_Mr = Mh + Mr
-        Nh_p_Nr = Nh + Nr
-        return :(if i <= $Mh_p_Mr && j <= $Nh_p_Nr # enter block 1
-                $(dense_sub2ind_quote(Mh_p_Mr, Nh_p_Nr, offset, joffset))
-            elseif j <= $Nh_p_Nr # enter block 2
-                $(dense_sub2ind_quote(Mh, Nh_p_Nr, offset + Mh_p_Mr * (Nh_p_Nr-1), joffset))
-            elseif i <= $Mh_p_Mr # enter block 3
-                $(dense_sub2ind_quote(Mh_p_Mr, Nh, offset + M * Nh_p_Nr, joffset + Nh_p_Nr))
-            else # enter block 4
-                $(dense_sub2ind_quote(Mh, Nh, offset + M * Nh_p_Nr + Mh_p_Mr * (Nh-1), joffset + Nh_p_Nr))
-            end)
-    elseif M > N # we are splitting the matrix into two blocks stacked on top of one another.
-        Mh, Mr = divrem(M, 2)
-        Mh_p_Mr = Mh + Mr
-
-        return :(if i < $Mh_p_Mr
-                $(dense_sub2ind_quote(Mh_p_Mr, N, offset, joffset))
-            else
-                $(dense_sub2ind_quote(Mh, N, offset + Mh_p_Mr * (N-1), joffset))
-            end)
-    else # we are splitting the matrix into two blocks, side by side.
-        Nh, Nr = divrem(N, 2)
-        Nh_p_Nr = Nh + Nr
-
-        return :(if j < $Nh_p_Nr
-                $(dense_sub2ind_quote(M, Nh_p_Nr, offset, joffset))
-            else
-                $(dense_sub2ind_quote(M, Nh, offset + M * Nh_p_Nr, joffset + Nh_p_Nr))
-            end)
-    end
-end
-
-"""
-Cartesian indexing isn't recomended, but it is convenient for printing.
-The approach for sub2ind here incurs branches, which would disable SIMD.
-Therefore, Cartesian indexing is strongly discouraged for hot loops.
-Still, it is reasonably fast -- only a handful of ns.
-"""
-@generated dense_sub2ind(::Val{M}, ::Val{N}, i, j) where {M,N} = dense_sub2ind_quote(M, N)
-
-
-
-###
-### From src/recursive_matrix.jl
-###
-@static if VERSION < v"0.7-"
-    struct Adjoint{T,A} <: AbstractMatrix{T}
-        parent::A
-    end
-else
-    import LinearAlgebra: Adjoint
-end
-
-
-
-abstract type AbstractRecursiveMatrix{T,M,N,L} <: AbstractArray{T,2} end# StaticArrays.StaticArray{Tuple{M,N}, T, 2} end
-abstract type MutableRecursiveMatrix{T,M,N,L} <: AbstractRecursiveMatrix{T,M,N,L} end
-mutable struct RecursiveMatrix{T,M,N,L} <: MutableRecursiveMatrix{T,M,N,L}
-    data::NTuple{L,T}
-    RecursiveMatrix{T,M,N,L}(data::NTuple{L,T}) where {T,M,N,L} = new(data)
-    RecursiveMatrix{T,M,N,L}() where {T,M,N,L} = new()
-end
-
-function RecursiveMatrix(data::NTuple{L,T}, ::Val{M}, ::Val{N}) where {M,N,L,T}
-    RecursiveMatrix{T,M,N,L}(data)
-end
-function RecursiveMatrix(::Type{T}, ::Val{M}, ::Val{N}, ::Val{L}) where {M,N,L,T}
-    RecursiveMatrix{T,M,N,L}()
-end
-function RecursiveMatrix(::Type{T}, ::Val{M}, ::Val{N}) where {T,M,N}
-    RecursiveMatrix(T,Val{M}(),Val{N}(),ValProd(Val{M}(),Val{L}()))
-end
-function RecursiveMatrix(data::NTuple{L,T}, ::Val{M}) where {M,L,T}
-    RecursiveMatrix(data, Val{M}(), ValDiv(Val{L}(),Val{M}()))
-end
-
-"""
-Creating a recursive matrix without compile time size information is not type stable.
-"""
-function RecursiveMatrix(data::AbstractMatrix)
-    M, N = size(data)
-    RecursiveMatrix(data, Val{M}(), Val{N}(), Val{M*N}())
-end
-function RecursiveMatrix(data::AbstractMatrix, ::Val{M}, ::Val{N}) where {M,N}
-    RecursiveMatrix(data, Val{M}(), Val{N}(), ValProd(Val{M}(), Val{N}()))
-end
-function RecursiveMatrix(data::AbstractMatrix{T}, ::Val{M}, ::Val{N}, ::Val{L}) where {T,M,N,L}
-    out = RecursiveMatrix(T, Val{M}(), Val{N}() ,Val{L}())
-    # Not an efficient order of indexing into the recursive matrix.
-    # Optimize later by doing it in branch-less chunks.
-    for i ∈ 1:N, j ∈ 1:M
-        out[j,i] = data[j,i] 
-    end
-    out
-end
-
-const RecursiveMatrixOrTranpose{T,M,N,L} = Union{
-    RecursiveMatrix{T,M,N,L},
-    Adjoint{T,RecursiveMatrix{T,N,M,L}}
-}
-
-istransposed(::AbstractRecursiveMatrix) = false #n()
-istransposed(::Type{<:AbstractRecursiveMatrix}) = false #n()
-istransposed(::Adjoint{T,<:AbstractRecursiveMatrix{T}}) where T = true #t()
-istransposed(::Type{<:Adjoint{T,<:AbstractRecursiveMatrix{T}}}) where T = true #t()
-
-sub2ind(t, dims, i, j) = t ? j + (i-1)*dims[2] : i + (j-1)*dims[1]
-
-# Base.size(::RecurseOrTranpose{T,M,N}) where {T,M,N} = (M,N)
-Base.size(::RecursiveMatrixOrTranpose{T,M,N}) where {T,M,N} = (M,N)
-
-
-@inline point(A::RecursiveMatrix{T}) where T = Base.unsafe_convert(Ptr{T}, pointer_from_objref(A))
-@inline point(A::Adjoint{T,<:RecursiveMatrix{T}}) where T = point(A.parent)
-
-@generated function Base.getindex(A::RecursiveMatrixOrTranpose{T,M,N,L}, i::Int) where {T,M,N,L}
-    bounds_error_string = "($M, $N) array at index (\$i,\$j)."
-
-    quote #Add recursion.
-        Base.@_inline_meta
-        @boundscheck begin
-            $L < i && throw(BoundsError($bounds_error_string))
-        end
-        A.data[i]
-        # A.data[][i]
-    end
-end
-
-
-@generated function Base.getindex(A::RecursiveMatrixOrTranpose{T,M,N,L}, i::Int, j::Int) where {T,M,N,L}
-    bounds_error_string = "($M, $N) array at index (\$i,\$j)."
-    if istransposed(A)
-        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), j, i))
-    else
-        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), i, j))
-    end
-    quote #Add recursion.
-        Base.@_inline_meta
-        @boundscheck begin
-            ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
-        end
-        A.data[$linear_ind_expr]
-    end
-end
-
-
-@generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val, i::Int) where {T,M,N,L}
-    bounds_error_string = "($M, $N) array at index (\$i,\$j)."
-    quote #Add recursion.
-        Base.@_inline_meta
-        @boundscheck begin
-            $L < i && throw(BoundsError($bounds_error_string))
-        end
-        unsafe_store!(point(A), convert(T, val), i )
-    end
-end
-# @generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val::K, i::Int, ::Type{K}) where {T,M,N,L,K}
-#     bounds_error_string = "($M, $N) array at index (\$i,\$j)."
-#     quote #Add recursion.
-#         Base.@_inline_meta
-#         # @boundscheck begin
-#         #     $L < i && throw(BoundsError($bounds_error_string))
-#         # end
-#         unsafe_store!(Base.unsafe_convert(Ptr{$K}, pointer_from_data(A.data) + i*$(sizeof(T)) ), 1 )
-#     end
-# end
-
-@generated function Base.setindex!(A::RecursiveMatrixOrTranpose{T,M,N,L}, val, i::Int, j::Int) where {T,M,N,L}
-    bounds_error_string = "($M, $N) array at index (\$i,\$j)."
-    if istransposed(A)
-        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), j, i))
-    else
-        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), i, j))
-    end
-    quote #Add recursion.
-        Base.@_inline_meta
-        @boundscheck begin
-            ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
-        end
-        # unsafe_store!(point(A), convert(T, val), sub2ind(istransposed(A), ($M,$N), i, j) )
-
-        unsafe_store!(point(A), convert(T, val), $linear_ind_expr )
-    end
-end
-
-
-
-###
-### from src/arithmetic/gemm.jl
-###
-
-"""
-Use `q, qa = create_quote(); mul_quote!(qa, M, N, P); q` to get an idea of what the
-generated Julia code looks like.
-"""
-function mul_quote!(qa, M, N, P, ta=false, A = :A, tb=false, B = :B, tc=false, C = :C,
-                        extract = extract_symbol, insert = extract_symbol, eq = :(=))
-
-    eA = (i,j) -> extract(A, sub2ind(ta, (M, N), i, j))
-    eB = (i,j) -> extract(B, sub2ind(tb, (N, P), i, j))
-    eC = (i,j) -> insert(C, sub2ind(tc, (M, P), i, j))
-    chunk = 4
-    N4, Nr = divrem(N, chunk)
-    for j = 1:P, i = 1:M
-        C_ij = eC(i, j)
-        push!(qa, Expr(eq, C_ij, :(+$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1:chunk]...) ) ))
-        for k = 2:N4
-            push!(qa, :($C_ij = $C_ij +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*(k-1):chunk*k ]...) ) )
-        end
-        Nr > 0 && push!(qa, :($C_ij = $C_ij +$([:( $(eA(i,r)) * $(eB(r,j))) for r ∈ 1+chunk*k:N ]...) ) )
-    end
-end
-
-function mul_kernel(M, N, P, tA=false, tB=false, tC=false, eq = :(=), LA = M*N, LB = N*P, LC = M*P)
-    q, qa = create_quote()
-    push!(q.args, :(Base.@_inline_meta))
-    extract_linear!(qa, LA, :A)
-    extract_linear!(qa, LB, :B)
-    mul_quote!(qa, M, N, P, tA, :A, tB, :B, tC, :C, id_symbol, id_symbol, eq )
-    insert_linear!(qa, LC, :C)
-    # isa(dummy, Bool) || push!(q.args, :C) # worth considering?
-    push!(q.args, :C)
-    q
-end
-
-@generated function mul!(C::RecursiveMatrixOrTranpose{T,M,P,LC},
-                        A::RecursiveMatrixOrTranpose{T,M,N,LA},
-                        B::RecursiveMatrixOrTranpose{T,N,P,LB},
-                        dummy = Nothing) where {T,M,N,P,LA,LB,LC}
-    mul_kernel(M, N, P, istransposed(A), istransposed(B), istransposed(C))
-end
-
-"""
-Not type stable, but lazy.
-"""
-randsquare(n) = RecursiveMatrix{Float64,n,n,abs2(n)}(ntuple(i -> randn(), Val(abs2(n))))
-
-a8 = randsquare(8);
-b8 = randsquare(8);
-c8 = randsquare(8);
-
-mul!(c8, a8, b8)
+TriangularMatrices.mul!(c8, a8, b8)
 
 using BenchmarkTools
-@benchmark mul!($c8, $a8, $b8)
+@benchmark TriangularMatrices.mul!($c8, $a8, $b8)
 
-@code_llvm mul!(c8, a8, b8)
-@code_native mul!(c8, a8, b8)
-
+@code_llvm TriangularMatrices.mul!(c8, a8, b8)
+@code_native TriangularMatrices.mul!(c8, a8, b8)
 ```
 
+The underlying data layout is recursive. You can visualize this via:
+```julia
+rm = RecursiveMatrix{Float64,50,50,50^2}();
+function set_to_ind!(A)
+    @inbounds for i = 1:length(A)
+        A[i] = i
+    end
+    A
+end
+set_to_ind!(rm)
+```
 
+One long term plan is to add plenty of smoke and mirror / convenience functions that abstract away the memory layout, and make iteration easy.
+If one doesn't mix these with normal arrays, differences in underlying memory layout shouldn't be an issue.
+
+Major problems right now are that printing and Cartesian getindex style functions do not seem to work for sizes > 100; the computer just hangs.
+I am not sure why. The sub2ind function seems to work fine, and switching from the generated function did not help.
+
+At small sizes, we have the option of generating StaticArrays.
+Note that the API is likely to change (improve) all around, and anything on that front is welcome. More `StaticArrays.jl` like.
+For now, because they were easy to implement, 
+
+```julia
+julia> using StaticArrays, TriangularMatrices, BenchmarkTools
+
+julia> a8_16_t = srandmat(8,16);
+
+julia> x16_4_t = srandmat(16,4);
+
+julia> a8_16_s = SMatrix{8,16}(a8_16_t.data);
+
+julia> x16_4_s = SMatrix{16,4}(x16_4_t.data);
+
+julia> @btime $a8_16_t * $x16_4_t
+  32.495 ns (0 allocations: 0 bytes)
+8×4 TriangularMatrices.StaticRecursiveMatrix{Float64,8,4,32}:
+ 10.1893    -5.8437    2.80989    0.279144 
+ -5.93568    9.09442  -3.71548   -2.54874  
+  1.17599    1.50367  -3.56322    7.24623  
+ -9.47634    2.39815  -2.40341   -1.34133  
+  3.54455    3.98109   8.13257   -1.42904  
+  0.505972  -4.51573  -2.23145   -1.92717  
+  2.26573    2.61974  -0.296927  -0.0811224
+  3.19529    1.09088   1.15119   -3.62086  
+
+julia> @btime $a8_16_s * $x16_4_s
+  72.788 ns (0 allocations: 0 bytes)
+8×4 SArray{Tuple{8,4},Float64,2,32}:
+ 10.1893    -5.8437    2.80989    0.279144 
+ -5.93568    9.09442  -3.71548   -2.54874  
+  1.17599    1.50367  -3.56322    7.24623  
+ -9.47634    2.39815  -2.40341   -1.34133  
+  3.54455    3.98109   8.13257   -1.42904  
+  0.505972  -4.51573  -2.23145   -1.92717  
+  2.26573    2.61974  -0.296927  -0.0811224
+  3.19529    1.09088   1.15119   -3.62086  
+```
+I wont promise better performance in general. Perhaps I should push some of these methods to `StaticArrays.jl` (but they may need testing beyond Ryzen), and I'd invite anyone from `StaticArrays.jl` to feel free to make use of the code included here.
+The reason I haven't immediately pushed, however, is that my style of creating generated functions is very different (and much more verbose) than that from `StaticArrays`.
+It performs best when there is a multiple of 8 rows for matrix `a`. Transposes are currently not supported. 
+```julia
+julia> a9_7_t = srandmat(9,7);
+
+julia> x7_5_t = srandmat(7,5);
+
+julia> a9_7_s = SMatrix{9,7}(a9_7_t.data);
+
+julia> x7_5_s = SMatrix{7,5}(x7_t_t.data);
+
+julia> x7_5_s = SMatrix{7,5}(x7_5_t.data);
+
+julia> @btime $a9_7_t * $x7_5_t
+  69.566 ns (0 allocations: 0 bytes)
+9×5 TriangularMatrices.StaticRecursiveMatrix{Float64,9,5,45}:
+  5.87802   -1.38701    -1.80427    0.452091   0.891524
+  4.36454   -6.40214    -2.21154   -3.58457    2.21833 
+ -6.15147    5.69626    -0.423356   2.08744   -2.32171 
+  1.13767   -3.73958     2.14368   -4.30442    3.19136 
+ -0.267927   4.12549     0.6696     1.46451   -0.2749  
+ -2.24227    2.18123    -1.66775    4.80728   -0.780624
+  1.51237    4.26399    -0.882069   1.83066   -2.82509 
+  9.14589    0.0892159  -0.806311   0.585653  -3.07461 
+ -0.106562   0.834258   -0.407539  -0.17226    0.446093
+
+julia> @btime $a9_7_s * $x7_5_s
+  76.636 ns (0 allocations: 0 bytes)
+9×5 SArray{Tuple{9,5},Float64,2,45}:
+  5.87802   -1.38701    -1.80427    0.452091   0.891524
+  4.36454   -6.40214    -2.21154   -3.58457    2.21833 
+ -6.15147    5.69626    -0.423356   2.08744   -2.32171 
+  1.13767   -3.73958     2.14368   -4.30442    3.19136 
+ -0.267927   4.12549     0.6696     1.46451   -0.2749  
+ -2.24227    2.18123    -1.66775    4.80728   -0.780624
+  1.51237    4.26399    -0.882069   1.83066   -2.82509 
+  9.14589    0.0892159  -0.806311   0.585653  -3.07461 
+ -0.106562   0.834258   -0.407539  -0.17226    0.446093
+```
+
+The particular case of 8 rows is used as a computational kernel for operations on larger matrices. These larger matrices have the recurse memory layout (the statically sized ones are column major). I use `unsafe_convert` on the pointer to the matrices, to convert the pointer to one of a StaticRecursiveMatrix, and then `unsafe_load` it, perform some matrix operations, and then `unsafe_store!`.
+
+The recursive memory layout helps with memory locality. We take successively smaller blocks, until we are within 3x the cutoff (8), and then calculate the matrix product of these smaller blocks, that should fit reasonably well in cache. The submatrices we load, and apply the well optimized (at least for the one test CPU) kernel to, are all contiguous within the larger matrices -- and therefore easy to load.
+Loading a block from a more typical column or row major matrix means loading data that is [matrix stride] apart.
+
+Currently only "reasonably square" matrices are supported (those that wont become more square by dividing the larger dimension by 2); the next couple updates will probably add unsquare ones. I just didn't implement the recursion pattern yet for when we aren't subdividing both matrices into 4 pieces.
+
+
+Work must still be done -- but it is pretty fast, and seems to hold on well!
+Disclaimer is that (again), this has only been tested on one CPU
+```julia
+julia> versioninfo()
+Julia Version 0.7.0-alpha.94
+Commit 4420717* (2018-06-12 20:26 UTC)
+Platform Info:
+  OS: Linux (x86_64-pc-linux-gnu)
+  CPU: AMD Ryzen Threadripper 1950X 16-Core Processor
+  WORD_SIZE: 64
+  LIBM: libopenlibm
+  LLVM: libLLVM-6.0.0 (ORCJIT, znver1)
+```
+so results are other architectures may vary.
+
+That said, here is are results for a range of sizes:
+```julia
+julia> using TriangularMatrices, BenchmarkTools, Compat, Compat.LinearAlgebra
+
+julia> BLAS.set_num_threads(1);
+
+julia> a24 = randmat(24);
+
+julia> x24 = randmat(24);
+
+julia> d24 = randmat(24);
+
+julia> ma24 = Matrix(a24); mx24 = Matrix(x24); md24 = Matrix(d24);
+
+julia> @benchmark TriangularMatrices.mul!($d24, $a24, $x24)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     922.618 ns (0.00% GC)
+  median time:      937.353 ns (0.00% GC)
+  mean time:        941.744 ns (0.00% GC)
+  maximum time:     1.405 μs (0.00% GC)
+  --------------
+  samples:          10000
+  evals/sample:     34
+
+julia> @benchmark mul!($md24, $ma24, $mx24)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     1.834 μs (0.00% GC)
+  median time:      1.859 μs (0.00% GC)
+  mean time:        1.864 μs (0.00% GC)
+  maximum time:     3.497 μs (0.00% GC)
+  --------------
+  samples:          10000
+  evals/sample:     10
+
+julia> d24
+24×24 TriangularMatrices.RecursiveMatrix{Float64,24,24,576}:
+ -0.72611    2.4225      6.60455     1.12438    -3.91458    0.783357  -5.98311   -3.88335    …   8.37751     -7.44928    0.151711   2.10512   -3.99916    -10.1735     -2.87984     -7.58292 
+  4.119      1.8578      8.03908     0.250269    6.85163   -0.273788   0.865248   2.67187        2.04173     -3.30995   -9.6648     1.51261   -5.56228     -5.64949    -2.20263     -0.346416
+ -4.76388    1.70232    -5.78069     2.71604     6.14647   -3.83652   -3.37427   -3.11791       -0.240003   -10.4852     0.379014  -5.07858   -6.45812      4.15937     2.21112      4.16147 
+  0.628409  -2.50996    -2.02896    -0.146478   -7.601     -6.66092   -2.19965    2.15868        0.556585    -1.31071    8.55004   -2.03531    5.9802       1.72166     6.89638    -11.4296  
+  6.03187   -3.37559     5.58076    -4.0917      0.649941   6.60824    1.10428    4.58822       -0.0736729   -0.53115   -2.53745    4.21337    0.427677     2.00542    -2.71762      3.21234 
+ -3.28417    5.29528    11.0577      0.168394    6.11039   -1.38006    1.04207    4.19234    …   0.574071    -0.403417  -3.3826    -3.45596   -2.25604     -0.0349107   4.33672      2.98093 
+ -3.52073   -2.88761     2.21455    -7.8482      1.30794   -0.112861   2.16578   -1.76638       -4.19796      2.15262   -2.09348   -0.801325  -5.01924      5.23182    -1.43605     -1.13626 
+ -7.11749   -6.8626     -6.76715    -1.94812   -12.2685     2.87183    3.01504   -2.94782        8.92743      1.34165    3.71095   -2.5028     7.05498     -3.70319     4.48984     -1.46488 
+  3.02067    3.71598     3.3306     -1.72252    -2.45686   -2.87337    2.07184   -4.52368       -3.19094     -5.5783    -5.782      8.06301   -3.95309     -3.54455    -8.19522     -5.36108 
+ -8.65843   -3.17823   -11.4472      2.38534    -7.82594    3.82238   -1.86833   -1.61647       -3.52735     10.8471     0.615747  -0.324967   4.43827     -0.0923198   4.09679      3.47029 
+ -9.61616   -2.13522    -5.59838    -0.486163  -15.5993     0.639285   1.81795   -1.56387    …   3.68986      2.2677    -1.93059   -3.94337    4.52173      0.956825    5.14112     -1.76068 
+ -3.64402   -4.70445     2.18643    -6.4278     -0.247135   0.926579  -7.22465   -5.62269       -3.99018     -7.97827   -6.95882   -4.0261    -3.52829      8.66593    -0.0353439    0.729568
+ -1.40586    6.47221     1.06941     1.33959     0.964918   1.68557    0.463921   0.734842      -4.70356      2.98143    1.32174    0.303753  -0.829571    -0.386158    2.53337      2.26142 
+ -2.97842   -1.5859      2.45539     2.58394     4.5596     8.67888    0.141568   0.0862084     -3.81184      9.45092    3.62921    2.45739    2.7875      -4.09849    -1.11944     -2.68445 
+  5.24189    4.31033    -1.7258      4.74652    -8.33749   -0.648737   3.44355   -4.29403        0.893726     0.154841   1.66606    1.04836    0.861992    -2.3987     -5.01833      3.05616 
+ -2.5183    -9.71438     4.35991    -8.32797   -13.4595    -1.88013   -7.39845   -4.08442    …   3.28034     -5.19325    4.36451    5.32168    4.28591    -10.5939     -8.70412     -2.75211 
+ -7.821      5.83462    -4.71768     2.69479    -1.76407    2.92882   -5.98035   -6.12514        0.765842     0.25734   -4.89538    2.01421   -5.47756     -3.91839     0.225971    -2.89316 
+ -4.68352   -2.38619     2.12986     1.98972     0.419445   4.26973   -4.88908   -1.98038       -5.28992     -6.86835   -3.09015   -1.2713    -5.00917     -2.45615    -0.0984895   -0.49919 
+ -5.75238    3.06524   -13.301      -1.49849    -7.73609    0.783648   4.81519   -7.51141       -7.6249       9.36838   -2.97519   -1.55821    4.25013      3.2286     -3.50898      2.72685 
+ -8.51579   -4.77586     0.0398508   4.008       9.43228    2.35983   -1.39657   -9.97629        0.362206     1.97002   -4.81133    1.25298    0.0353578    2.95901    -2.70902    -12.3983  
+ -4.8232    -0.170742    4.04495     0.487032   -0.774929  -4.55331    1.34341    5.79082    …   4.48081     -8.86813   -5.59245   -3.36141   -0.197709    -1.07279     0.451305    -3.49154 
+  2.25427   -5.72853    -1.10587    -1.2225    -15.2724    -0.597255  -1.83483    1.83747       15.9411      -8.16942    2.65912    2.84       2.77031     -1.39693     1.46594     -0.565013
+ -2.05683   -4.08798     4.28845    -2.96689     1.9574    -0.883339  -2.80035    4.23345       -1.54606     -8.36364    1.31562   -0.760092  -3.34606     -0.487428   -3.61488      0.893428
+  4.19662   -0.465654  -12.1332     -0.171609   -3.94283   -3.65002    3.19932   -1.44796        8.77645      2.82636   -4.44471   -1.12311    4.04701      1.48106     2.44771     12.2694  
+
+julia> md24
+24×24 Array{Float64,2}:
+ -0.72611    2.4225      6.60455     1.12438    -3.91458    0.783357  -5.98311   -3.88335    …   8.37751     -7.44928    0.151711   2.10512   -3.99916    -10.1735     -2.87984     -7.58292 
+  4.119      1.8578      8.03908     0.250269    6.85163   -0.273788   0.865248   2.67187        2.04173     -3.30995   -9.6648     1.51261   -5.56228     -5.64949    -2.20263     -0.346416
+ -4.76388    1.70232    -5.78069     2.71604     6.14647   -3.83652   -3.37427   -3.11791       -0.240003   -10.4852     0.379014  -5.07858   -6.45812      4.15937     2.21112      4.16147 
+  0.628409  -2.50996    -2.02896    -0.146478   -7.601     -6.66092   -2.19965    2.15868        0.556585    -1.31071    8.55004   -2.03531    5.9802       1.72166     6.89638    -11.4296  
+  6.03187   -3.37559     5.58076    -4.0917      0.649941   6.60824    1.10428    4.58822       -0.0736729   -0.53115   -2.53745    4.21337    0.427677     2.00542    -2.71762      3.21234 
+ -3.28417    5.29528    11.0577      0.168394    6.11039   -1.38006    1.04207    4.19234    …   0.574071    -0.403417  -3.3826    -3.45596   -2.25604     -0.0349107   4.33672      2.98093 
+ -3.52073   -2.88761     2.21455    -7.8482      1.30794   -0.112861   2.16578   -1.76638       -4.19796      2.15262   -2.09348   -0.801325  -5.01924      5.23182    -1.43605     -1.13626 
+ -7.11749   -6.8626     -6.76715    -1.94812   -12.2685     2.87183    3.01504   -2.94782        8.92743      1.34165    3.71095   -2.5028     7.05498     -3.70319     4.48984     -1.46488 
+  3.02067    3.71598     3.3306     -1.72252    -2.45686   -2.87337    2.07184   -4.52368       -3.19094     -5.5783    -5.782      8.06301   -3.95309     -3.54455    -8.19522     -5.36108 
+ -8.65843   -3.17823   -11.4472      2.38534    -7.82594    3.82238   -1.86833   -1.61647       -3.52735     10.8471     0.615747  -0.324967   4.43827     -0.0923198   4.09679      3.47029 
+ -9.61616   -2.13522    -5.59838    -0.486163  -15.5993     0.639285   1.81795   -1.56387    …   3.68986      2.2677    -1.93059   -3.94337    4.52173      0.956825    5.14112     -1.76068 
+ -3.64402   -4.70445     2.18643    -6.4278     -0.247135   0.926579  -7.22465   -5.62269       -3.99018     -7.97827   -6.95882   -4.0261    -3.52829      8.66593    -0.0353439    0.729568
+ -1.40586    6.47221     1.06941     1.33959     0.964918   1.68557    0.463921   0.734842      -4.70356      2.98143    1.32174    0.303753  -0.829571    -0.386158    2.53337      2.26142 
+ -2.97842   -1.5859      2.45539     2.58394     4.5596     8.67888    0.141568   0.0862084     -3.81184      9.45092    3.62921    2.45739    2.7875      -4.09849    -1.11944     -2.68445 
+  5.24189    4.31033    -1.7258      4.74652    -8.33749   -0.648737   3.44355   -4.29403        0.893726     0.154841   1.66606    1.04836    0.861992    -2.3987     -5.01833      3.05616 
+ -2.5183    -9.71438     4.35991    -8.32797   -13.4595    -1.88013   -7.39845   -4.08442    …   3.28034     -5.19325    4.36451    5.32168    4.28591    -10.5939     -8.70412     -2.75211 
+ -7.821      5.83462    -4.71768     2.69479    -1.76407    2.92882   -5.98035   -6.12514        0.765842     0.25734   -4.89538    2.01421   -5.47756     -3.91839     0.225971    -2.89316 
+ -4.68352   -2.38619     2.12986     1.98972     0.419445   4.26973   -4.88908   -1.98038       -5.28992     -6.86835   -3.09015   -1.2713    -5.00917     -2.45615    -0.0984895   -0.49919 
+ -5.75238    3.06524   -13.301      -1.49849    -7.73609    0.783648   4.81519   -7.51141       -7.6249       9.36838   -2.97519   -1.55821    4.25013      3.2286     -3.50898      2.72685 
+ -8.51579   -4.77586     0.0398508   4.008       9.43228    2.35983   -1.39657   -9.97629        0.362206     1.97002   -4.81133    1.25298    0.0353578    2.95901    -2.70902    -12.3983  
+ -4.8232    -0.170742    4.04495     0.487032   -0.774929  -4.55331    1.34341    5.79082    …   4.48081     -8.86813   -5.59245   -3.36141   -0.197709    -1.07279     0.451305    -3.49154 
+  2.25427   -5.72853    -1.10587    -1.2225    -15.2724    -0.597255  -1.83483    1.83747       15.9411      -8.16942    2.65912    2.84       2.77031     -1.39693     1.46594     -0.565013
+ -2.05683   -4.08798     4.28845    -2.96689     1.9574    -0.883339  -2.80035    4.23345       -1.54606     -8.36364    1.31562   -0.760092  -3.34606     -0.487428   -3.61488      0.893428
+  4.19662   -0.465654  -12.1332     -0.171609   -3.94283   -3.65002    3.19932   -1.44796        8.77645      2.82636   -4.44471   -1.12311    4.04701      1.48106     2.44771     12.2694  
+
+julia> a32 = randmat(32);
+
+julia> x32 = randmat(32);
+
+julia> d32 = randmat(32);
+
+julia> ma32 = Matrix(a32); mx32 = Matrix(x32); md32 = Matrix(d32);
+
+julia> @benchmark TriangularMatrices.mul!($d32, $a32, $x32)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     2.277 μs (0.00% GC)
+  median time:      2.328 μs (0.00% GC)
+  mean time:        2.332 μs (0.00% GC)
+  maximum time:     4.778 μs (0.00% GC)
+  --------------
+  samples:          10000
+  evals/sample:     9
+
+julia> @benchmark mul!($md32, $ma32, $mx32)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     4.348 μs (0.00% GC)
+  median time:      4.441 μs (0.00% GC)
+  mean time:        4.461 μs (0.00% GC)
+  maximum time:     7.088 μs (0.00% GC)
+  --------------
+  samples:          10000
+  evals/sample:     7
+
+julia> d32
+32×32 TriangularMatrices.RecursiveMatrix{Float64,32,32,1024}:
+  -1.01497    -3.2349      7.33089      9.29142     5.25735     3.50466    -4.31681    -6.87088   …   -6.69197     1.24515     8.15928      6.35929      3.07831   -10.5702      -1.96523 
+   0.488508   -1.29359    -1.00986     -7.4107     -2.17289     7.68103     1.39938    -9.63956       -2.9425     -5.70307     5.31649     10.2344      -5.45026     3.07894      2.46616 
+  -2.84157    -7.0702      0.382092   -11.2113     -1.13004     2.29395     0.416183   -3.1779        -0.0397613   4.20537    -0.906887     2.82283     -6.26241    13.6261     -12.0458  
+   6.39276     9.09588     8.45948      6.01115     5.86571    -5.06094    -2.24606    -4.90531       -0.195845   -3.64104     0.752049    -6.03171     -2.42029    -3.39629     -5.53604 
+   3.41793    -2.54684    -1.44295     11.2661      1.17539    -0.124794    4.16273    -1.19887       10.3051      1.84028    -1.72308      1.63021      7.7904      3.47317      2.63053 
+  10.0011     -6.02455    -2.87833      2.91923    -2.22608     5.39178    -9.14459     6.95097   …   -3.13481     0.218937  -13.8573     -16.9923       9.08259   -12.9239      -0.359569
+   1.68946     9.22714     1.64501      2.20466    -1.26177     8.45996     0.321004   -6.11439        4.68827     7.86334    -3.08296     -7.68676      3.58224     4.26364     -2.1678  
+  -1.87392     3.47297     1.46975     -2.79853     9.9912      8.31367     6.3042      0.521168     -13.5979     -4.47645     1.03933      0.685079    -8.90991     1.20357     -0.396479
+ -10.039      -8.75939     7.99489    -10.2463      4.16652   -15.3088      0.341577    7.59362       -7.26431     5.44004     0.54437     -4.25514     -2.58121     5.06176     10.4821  
+   3.62081    -3.61211     5.72359      4.19182    -3.14492     9.5746      0.381176    2.51294        3.58119    -0.823761    0.799236    -0.0490327   -3.11801     7.67527      1.15647 
+  -4.6056      3.70207     1.15824     -4.45561    -6.28723    -1.86122    -6.95734     3.5773    …   -1.45266    -1.0213     -2.94441     -0.450876    -8.98423     2.22626     -6.63875 
+  -1.81977     0.329143    1.4509       4.10501    -1.26558    -1.73069     5.68348     1.97101        4.6117      1.33795    -7.19348      3.54296      6.07531     0.630333     0.990126
+  -6.98202   -10.3729     -6.068      -14.2403      7.00145   -11.8846     -2.44962     4.13813        2.06752     0.209846    5.40926      5.16366     -6.02901    -0.626778     6.24529 
+  -6.62024    -6.30951     3.60722     -2.64379    -4.25977    -7.42652    -0.0814174  -7.70948      -10.0963      3.49868     1.57039      4.81621     -9.33145    -0.0934353   -0.571068
+   2.33965     1.05073    -2.47716      8.46653    -8.72054     1.46681    -6.80976    -5.80251       -2.93258     3.53448     0.0600691   -8.93351      0.62392     1.99631     -7.74948 
+  -6.38013    -2.43548    -7.31456      2.19328    -3.36561     6.14948   -10.648       2.45863   …    6.36009    -2.46112     0.122654    -9.01253     -2.59016    -1.93101      1.1617  
+   8.44414     8.82155     2.60866     -0.574836    4.6874     15.0464     -1.08182    -1.23651       -3.88577     0.710484    5.87879     -7.66154     -9.25718    -1.64695     -8.80474 
+  -1.40482    -6.02943     9.64176     -5.72501     1.61987    -2.52135     9.41326     3.61062       -7.78245     1.01489     1.01339     -5.72222      2.36793     8.90357     15.044   
+  -7.25568     0.601159   -8.5404      -6.24787    -1.106       4.63694    -5.14308    -4.51629        3.77669    -1.1821     -0.670473    -1.00789    -10.7771      7.93218      6.07356 
+  -8.20489    -0.0857722  -8.91764     -4.95232    -0.100649   -5.52973    -8.83615     2.34681        1.27922    -1.88857    11.2604      -3.89227      1.19567    -8.03697      2.85394 
+   5.56931     4.33608     6.8626       0.952992    1.37488    -0.984656    3.15524    -1.30064   …   -4.85504     0.213088   -5.63115     -3.0031       0.973434    0.539041     7.66099 
+  -6.53684    -2.61017    -7.37959      1.68561     4.41174    -2.07825    -3.14442     2.87011        6.997       3.37221     0.227116    -3.4524       0.434571   -0.34807      8.5037  
+   3.8185     -1.04132     0.455282   -11.9219      1.61953    11.5499      0.711243    5.09766       -3.85795     0.909095   -8.13741     -2.51812     -0.460288   -0.441138     1.45818 
+  -3.31524    -1.97194    -3.27559      2.73215    -7.31418     0.650651   -6.64845    -5.9227        -6.68091    -6.5459      4.46335      6.24837     -5.0925     -9.93977     -1.66483 
+  -9.33169     8.28807    -5.81995      7.43603     2.52292    -4.79169     5.25213     1.4341        10.5545     -6.38806     2.17178      5.45915     -0.453103    3.08258      7.79251 
+  -1.23807     1.12364    -7.57291    -10.5324      6.03808    -1.76214     2.68739    -2.68074   …   -1.60494    -0.597648    2.84339     -0.0867996   -3.19102    -1.95887      6.34025 
+  -5.66435    -2.642      -0.351776    -7.66014     1.39564    -3.51814    -5.88468     3.74342       -5.1952     -3.74537    -4.87863      5.01226     -0.563233   -6.94355      6.6764  
+   1.36555    -1.8156      0.75078     -5.56042     5.81295    19.058       5.6069     -1.50181       -7.25355     0.925669   -4.73348      1.47237      0.929913    3.75999      1.6385  
+  -2.16436    -3.03877    -0.483645    -5.20469   -11.5704     -4.81552    -3.73986    -6.11317       -3.68533    -1.59466    -3.80605     -0.697032     4.27347     0.785471     3.90685 
+   0.8756      5.58522    -0.0560817    2.67656     1.62712     9.57189    -1.60583     7.40295        5.67469     7.55952   -12.3557      -0.451548    -1.83705    -1.59233      0.760599
+  -1.8836     -7.47327     5.88045     -6.25453     0.190888   -6.05467     4.41514    -1.11803   …   -3.94155    -2.71531     0.861866     3.52503      4.74776    -0.559844     9.66244 
+  -4.79697    -0.757974   -3.92763     -3.81715    13.078       3.39769    -1.22663    -7.68425       -0.027217   -2.6583     -1.48702      3.86319     -3.7744     -0.164565     8.75395 
+
+julia> md32
+32×32 Array{Float64,2}:
+  -1.01497    -3.2349      7.33089      9.29142     5.25735     3.50466    -4.31681    -6.87088   …   -6.69197     1.24515     8.15928      6.35929      3.07831   -10.5702      -1.96523 
+   0.488508   -1.29359    -1.00986     -7.4107     -2.17289     7.68103     1.39938    -9.63956       -2.9425     -5.70307     5.31649     10.2344      -5.45026     3.07894      2.46616 
+  -2.84157    -7.0702      0.382092   -11.2113     -1.13004     2.29395     0.416183   -3.1779        -0.0397613   4.20537    -0.906887     2.82283     -6.26241    13.6261     -12.0458  
+   6.39276     9.09588     8.45948      6.01115     5.86571    -5.06094    -2.24606    -4.90531       -0.195845   -3.64104     0.752049    -6.03171     -2.42029    -3.39629     -5.53604 
+   3.41793    -2.54684    -1.44295     11.2661      1.17539    -0.124794    4.16273    -1.19887       10.3051      1.84028    -1.72308      1.63021      7.7904      3.47317      2.63053 
+  10.0011     -6.02455    -2.87833      2.91923    -2.22608     5.39178    -9.14459     6.95097   …   -3.13481     0.218937  -13.8573     -16.9923       9.08259   -12.9239      -0.359569
+   1.68946     9.22714     1.64501      2.20466    -1.26177     8.45996     0.321004   -6.11439        4.68827     7.86334    -3.08296     -7.68676      3.58224     4.26364     -2.1678  
+  -1.87392     3.47297     1.46975     -2.79853     9.9912      8.31367     6.3042      0.521168     -13.5979     -4.47645     1.03933      0.685079    -8.90991     1.20357     -0.396479
+ -10.039      -8.75939     7.99489    -10.2463      4.16652   -15.3088      0.341577    7.59362       -7.26431     5.44004     0.54437     -4.25514     -2.58121     5.06176     10.4821  
+   3.62081    -3.61211     5.72359      4.19182    -3.14492     9.5746      0.381176    2.51294        3.58119    -0.823761    0.799236    -0.0490327   -3.11801     7.67527      1.15647 
+  -4.6056      3.70207     1.15824     -4.45561    -6.28723    -1.86122    -6.95734     3.5773    …   -1.45266    -1.0213     -2.94441     -0.450876    -8.98423     2.22626     -6.63875 
+  -1.81977     0.329143    1.4509       4.10501    -1.26558    -1.73069     5.68348     1.97101        4.6117      1.33795    -7.19348      3.54296      6.07531     0.630333     0.990126
+  -6.98202   -10.3729     -6.068      -14.2403      7.00145   -11.8846     -2.44962     4.13813        2.06752     0.209846    5.40926      5.16366     -6.02901    -0.626778     6.24529 
+  -6.62024    -6.30951     3.60722     -2.64379    -4.25977    -7.42652    -0.0814174  -7.70948      -10.0963      3.49868     1.57039      4.81621     -9.33145    -0.0934353   -0.571068
+   2.33965     1.05073    -2.47716      8.46653    -8.72054     1.46681    -6.80976    -5.80251       -2.93258     3.53448     0.0600691   -8.93351      0.62392     1.99631     -7.74948 
+  -6.38013    -2.43548    -7.31456      2.19328    -3.36561     6.14948   -10.648       2.45863   …    6.36009    -2.46112     0.122654    -9.01253     -2.59016    -1.93101      1.1617  
+   8.44414     8.82155     2.60866     -0.574836    4.6874     15.0464     -1.08182    -1.23651       -3.88577     0.710484    5.87879     -7.66154     -9.25718    -1.64695     -8.80474 
+  -1.40482    -6.02943     9.64176     -5.72501     1.61987    -2.52135     9.41326     3.61062       -7.78245     1.01489     1.01339     -5.72222      2.36793     8.90357     15.044   
+  -7.25568     0.601159   -8.5404      -6.24787    -1.106       4.63694    -5.14308    -4.51629        3.77669    -1.1821     -0.670473    -1.00789    -10.7771      7.93218      6.07356 
+  -8.20489    -0.0857722  -8.91764     -4.95232    -0.100649   -5.52973    -8.83615     2.34681        1.27922    -1.88857    11.2604      -3.89227      1.19567    -8.03697      2.85394 
+   5.56931     4.33608     6.8626       0.952992    1.37488    -0.984656    3.15524    -1.30064   …   -4.85504     0.213088   -5.63115     -3.0031       0.973434    0.539041     7.66099 
+  -6.53684    -2.61017    -7.37959      1.68561     4.41174    -2.07825    -3.14442     2.87011        6.997       3.37221     0.227116    -3.4524       0.434571   -0.34807      8.5037  
+   3.8185     -1.04132     0.455282   -11.9219      1.61953    11.5499      0.711243    5.09766       -3.85795     0.909095   -8.13741     -2.51812     -0.460288   -0.441138     1.45818 
+  -3.31524    -1.97194    -3.27559      2.73215    -7.31418     0.650651   -6.64845    -5.9227        -6.68091    -6.5459      4.46335      6.24837     -5.0925     -9.93977     -1.66483 
+  -9.33169     8.28807    -5.81995      7.43603     2.52292    -4.79169     5.25213     1.4341        10.5545     -6.38806     2.17178      5.45915     -0.453103    3.08258      7.79251 
+  -1.23807     1.12364    -7.57291    -10.5324      6.03808    -1.76214     2.68739    -2.68074   …   -1.60494    -0.597648    2.84339     -0.0867996   -3.19102    -1.95887      6.34025 
+  -5.66435    -2.642      -0.351776    -7.66014     1.39564    -3.51814    -5.88468     3.74342       -5.1952     -3.74537    -4.87863      5.01226     -0.563233   -6.94355      6.6764  
+   1.36555    -1.8156      0.75078     -5.56042     5.81295    19.058       5.6069     -1.50181       -7.25355     0.925669   -4.73348      1.47237      0.929913    3.75999      1.6385  
+  -2.16436    -3.03877    -0.483645    -5.20469   -11.5704     -4.81552    -3.73986    -6.11317       -3.68533    -1.59466    -3.80605     -0.697032     4.27347     0.785471     3.90685 
+   0.8756      5.58522    -0.0560817    2.67656     1.62712     9.57189    -1.60583     7.40295        5.67469     7.55952   -12.3557      -0.451548    -1.83705    -1.59233      0.760599
+  -1.8836     -7.47327     5.88045     -6.25453     0.190888   -6.05467     4.41514    -1.11803   …   -3.94155    -2.71531     0.861866     3.52503      4.74776    -0.559844     9.66244 
+  -4.79697    -0.757974   -3.92763     -3.81715    13.078       3.39769    -1.22663    -7.68425       -0.027217   -2.6583     -1.48702      3.86319     -3.7744     -0.164565     8.75395 
+
+julia> a64 = randmat(64);
+
+julia> x64 = randmat(64);
+
+julia> d64 = randmat(64);
+
+julia> ma64 = Matrix(a64); mx64 = Matrix(x64); md64 = Matrix(d64);
+
+julia> @benchmark TriangularMatrices.mul!($d64, $a64, $x64)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     18.925 μs (0.00% GC)
+  median time:      19.266 μs (0.00% GC)
+  mean time:        19.362 μs (0.00% GC)
+  maximum time:     37.871 μs (0.00% GC)
+  --------------
+  samples:          10000
+  evals/sample:     1
+
+julia> @benchmark mul!($md64, $ma64, $mx64)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     24.245 μs (0.00% GC)
+  median time:      24.526 μs (0.00% GC)
+  mean time:        24.669 μs (0.00% GC)
+  maximum time:     47.649 μs (0.00% GC)
+  --------------
+  samples:          10000
+  evals/sample:     1
+
+julia> d64
+64×64 TriangularMatrices.RecursiveMatrix{Float64,64,64,4096}:
+  -7.31121    10.0392     -7.24895     7.54641     5.44192     5.62067     4.11624    -6.17832    …    2.4244      -3.07116     4.63457     3.65337   -17.1628     -11.0027     -4.08889 
+   5.13429     0.839153   15.7757     -0.781667  -16.907      -0.509486   -4.12781    -7.21381         4.61995      9.40825     4.37888    -2.04971     5.02571      6.72788    -6.33079 
+   4.71801    10.6154      5.50924    -7.81941     4.20037    -1.36442   -10.8469     12.7135          7.79168      6.27231     4.22833    -0.89541    -2.58147     -8.73954    -0.923008
+   2.7431      0.585738    6.17148     6.17645    -0.40807   -17.8608      9.16854     1.67743         1.17776      9.13711   -13.2332      6.58774     2.31241     -6.85946    -1.31467 
+  12.5651     10.3932      4.33241    -6.54124    11.9332     -5.56761   -11.7327      1.49168        -0.355663    11.777      -8.18063     6.71737     5.15041     -4.91711    -5.07172 
+  -1.39673     2.69946     8.43343    12.0501     -9.87185     4.62585    11.1981      3.9258     …   -6.61275      0.83584     0.504239   -2.35035     6.44984     10.6675     -7.10667 
+  -3.64626     5.9151    -11.3324     -4.52241    13.5508     -6.77195    14.7743     -9.44962       -15.5095     -11.2198     -2.09335    10.0384     -2.92176      3.05339     9.78618 
+  11.2155      2.44167    -5.3411      0.596903   -1.41114    -3.21076     0.786277    6.02509        -0.280249     3.15266    -6.70329     1.44451    -3.86921      1.487      -5.32636 
+   3.14616     2.51457     6.67418    -5.58499    -8.72489    -4.018     -13.3393     12.743           3.97042     -1.61159    13.3023     -1.12299    -0.556041    -7.75524     2.82297 
+  10.4134     -2.97572   -17.258       9.33598    -4.92099    -3.99301    -0.643789    0.293331       -5.81678     -9.66386    -3.136      -7.26633     3.21609    -22.141     -12.6025  
+   2.71669    -2.21135     7.70066    15.215      -4.40475     0.221246    6.62393   -13.3599     …    8.24836    -12.7177     -4.19015     7.92149     8.24328      0.86216    -6.24507 
+  -4.66868    -0.859887    7.75225   -16.429       3.16741    -6.09253    -8.10985    -6.29232        -3.96049     -1.06804    10.199      16.4302     -2.75327      4.45712     9.80488 
+ -14.8587     14.7533     -3.04072     2.1048      4.52525     1.36746    11.7938     -8.73892         0.0707496    9.04438     5.94629     1.25746    -0.0350682   -1.55051    19.4503  
+   4.00619    15.8864      6.48482     9.56434    -5.12035     3.90414    -4.66606     2.00705         0.712196     0.934013    6.54093    -3.36754     2.56477      5.33293     2.82458 
+   7.32997    14.4943     -4.23857    -6.87289     4.01272    -8.0793     -7.92004    -1.5618        -11.8617      -9.43821    -5.50952     2.81712    -5.87852      2.70335    -6.45555 
+  -1.58174     9.02951     5.4427      4.76519    -4.34547     6.88498    -0.793327    1.57046    …    2.90745      8.35918    -3.2091     -2.51688    -6.93076     11.3035      0.860013
+   5.05604    -0.943687    2.17729    -5.70002     1.90427   -12.6932     11.0167     -0.580045        5.68458     -7.95445    -4.76866     3.23509    -7.3072       4.71796    -5.11388 
+  -5.17721    13.3868      9.40901    -7.96925    -2.95292    -3.65471     1.74189     2.68854         2.9436       5.52726     4.23394    -1.19932   -11.4087       4.83982    -0.76571 
+  -7.08686    -4.20254     8.60689    -1.49207     5.88754     0.1986     11.035      -1.36975         3.25463     -7.62769     0.281565    1.16153    -5.53881      8.67606     5.69471 
+  -2.41       -4.17537    18.7619    -13.9048      5.12648     3.18966   -12.8727     20.1276          5.86761      9.37836    -9.43994     3.12717     8.99217      3.14791    -1.14907 
+  -7.41526   -15.8674      0.312865   -8.9899     -6.76461    -1.72289    14.8762     -7.46047    …   -7.56876     -4.77355     6.22645    -1.81424   -11.0274      11.9612      0.949182
+   ⋮                                                           ⋮                                  ⋱                                         ⋮                                            
+  12.0235      8.62361    -4.90074     0.369401   -0.597563    1.64814   -16.9592      6.05569         5.66412     -6.59915     0.466041   -4.19671    -1.88561      6.5583     -2.81087 
+ -16.358       6.64443     6.20648    -7.83412    -5.7061    -12.0356     21.8655     -9.56767       -19.048        0.382318    6.11961     1.47244    11.4583       1.7431      8.45353 
+   6.71508    -9.83984     4.21565   -11.3833     13.4253     -3.88877    -8.95658     4.80277    …   12.4515       7.72007    -6.23715    16.6208     -2.89265     -2.5918      1.9923  
+  -6.34514    -0.33819    15.7588      4.44958    -8.32711    -6.025      -7.87514     6.54096        -1.18295     -6.19439     7.00635   -10.6336      9.6994       3.68682     9.14803 
+   8.76774     7.57525    -4.74797    15.3199      1.08129     2.82381   -17.1151      0.0610513      13.4295      -4.0302     18.3345     -7.7923     23.2779      -1.59533     2.25912 
+   3.24214    12.2863     -7.29716     5.96422     1.55467    -7.4213     -6.06082     5.52348         4.95966     -4.23651    -2.20774    -9.26251     4.94756     -7.81571    -4.96848 
+   7.10075    -9.02179     6.44772    -1.32759    -2.32321     2.81775    -1.86997     9.35782         2.52055      9.49496    -9.0169     -5.05295     2.76668     -7.10354     2.39416 
+  -8.22329    -5.63177    14.5244      7.55472     6.49753    -3.91428    -0.40714     5.96077    …   -0.943715    -8.85169    11.1498      9.23636     7.9781     -14.0432      0.32603 
+  -0.514068   -3.02383    -0.640043   -5.94377    -7.1891     -1.15905    -2.26414    -0.0262547     -10.2124       1.35435    -6.74595    -5.30525     3.4856       0.491816    0.998428
+ -13.3024     -6.74817    -6.36506    -1.14303    -4.39477    -2.7062      1.31045     3.48587        -8.62435    -14.2364     -9.11057    -1.29645    -5.84306     -5.46582     5.09357 
+  -4.1471     -8.45232    -4.28617    13.3083    -11.1672     -1.11917     1.08457    12.7048         -5.20692     -6.48717    -3.71627    -1.52226    -0.580721    -1.90388    -8.26873 
+   3.44233    -6.06176    16.6255      4.43167     6.35555    -3.99292     8.6997     -7.06192       -13.5206       0.064584   -3.04337    18.1825    -15.7316       0.478683    0.449569
+   0.83146    -9.27186    17.3888    -12.7845      1.60802     1.49247     0.414132  -15.4033     …  -12.1693      14.2918     -4.81058    15.1308    -10.6605       2.51166    -2.32448 
+  -9.82128     3.03704    10.0534      3.71729   -11.5251     -0.216518    2.4551     -2.83721        -5.00438      2.15473     5.26742    -0.071076  -10.4802      -5.18466    -0.572443
+  -4.44045    -7.83366   -13.5836     10.546      -0.154502   -1.06166     1.02906   -18.7573         -6.1087      -3.45851    20.5571      1.12993    -2.06812     -3.84481     6.32558 
+   6.84167    -5.31608     1.1011     -0.79313     8.42858     2.06081     3.70799    -3.57294        -0.0908282    6.13894    -0.860697    3.6373      7.28366      7.84952     2.4348  
+   3.55469    -7.05994     2.05055     4.43016     0.162858   -0.609934   20.2855     -5.31457       -10.1887       7.03211   -17.1934      2.16146    -5.98378     -3.41463     4.11364 
+   7.66026   -18.9163     13.7711     -8.41781     6.55453     8.98097   -11.9918     -4.42264    …    3.2304       1.98218     7.77607    -0.490764   17.7613       1.2682      7.11993 
+   7.81536    -5.78884   -12.5167      6.83728   -10.391      -0.999197    1.57728    -3.62928        -4.09449     -2.35102     1.70133     0.249539    3.16704     -4.78294    -9.49874 
+  -9.16156    -5.25138     0.956943   -7.68119    -0.153309   -1.28389     3.64492   -10.0316         -8.68775     -4.16999     8.4215     -7.3464     -4.32817      3.59475    10.8253  
+   4.85714     7.353       0.609886   -4.7931     -5.74898    -5.29621     0.451217    7.46492        -2.92471      1.16784   -12.2155      2.49099    -6.0161      -5.25501    -4.18359 
+
+julia> md64
+64×64 Array{Float64,2}:
+  -7.31121    10.0392     -7.24895     7.54641     5.44192     5.62067     4.11624    -6.17832    …    2.4244      -3.07116     4.63457     3.65337   -17.1628     -11.0027     -4.08889 
+   5.13429     0.839153   15.7757     -0.781667  -16.907      -0.509486   -4.12781    -7.21381         4.61995      9.40825     4.37888    -2.04971     5.02571      6.72788    -6.33079 
+   4.71801    10.6154      5.50924    -7.81941     4.20037    -1.36442   -10.8469     12.7135          7.79168      6.27231     4.22833    -0.89541    -2.58147     -8.73954    -0.923008
+   2.7431      0.585738    6.17148     6.17645    -0.40807   -17.8608      9.16854     1.67743         1.17776      9.13711   -13.2332      6.58774     2.31241     -6.85946    -1.31467 
+  12.5651     10.3932      4.33241    -6.54124    11.9332     -5.56761   -11.7327      1.49168        -0.355663    11.777      -8.18063     6.71737     5.15041     -4.91711    -5.07172 
+  -1.39673     2.69946     8.43343    12.0501     -9.87185     4.62585    11.1981      3.9258     …   -6.61275      0.83584     0.504239   -2.35035     6.44984     10.6675     -7.10667 
+  -3.64626     5.9151    -11.3324     -4.52241    13.5508     -6.77195    14.7743     -9.44962       -15.5095     -11.2198     -2.09335    10.0384     -2.92176      3.05339     9.78618 
+  11.2155      2.44167    -5.3411      0.596903   -1.41114    -3.21076     0.786277    6.02509        -0.280249     3.15266    -6.70329     1.44451    -3.86921      1.487      -5.32636 
+   3.14616     2.51457     6.67418    -5.58499    -8.72489    -4.018     -13.3393     12.743           3.97042     -1.61159    13.3023     -1.12299    -0.556041    -7.75524     2.82297 
+  10.4134     -2.97572   -17.258       9.33598    -4.92099    -3.99301    -0.643789    0.293331       -5.81678     -9.66386    -3.136      -7.26633     3.21609    -22.141     -12.6025  
+   2.71669    -2.21135     7.70066    15.215      -4.40475     0.221246    6.62393   -13.3599     …    8.24836    -12.7177     -4.19015     7.92149     8.24328      0.86216    -6.24507 
+  -4.66868    -0.859887    7.75225   -16.429       3.16741    -6.09253    -8.10985    -6.29232        -3.96049     -1.06804    10.199      16.4302     -2.75327      4.45712     9.80488 
+ -14.8587     14.7533     -3.04072     2.1048      4.52525     1.36746    11.7938     -8.73892         0.0707496    9.04438     5.94629     1.25746    -0.0350682   -1.55051    19.4503  
+   4.00619    15.8864      6.48482     9.56434    -5.12035     3.90414    -4.66606     2.00705         0.712196     0.934013    6.54093    -3.36754     2.56477      5.33293     2.82458 
+   7.32997    14.4943     -4.23857    -6.87289     4.01272    -8.0793     -7.92004    -1.5618        -11.8617      -9.43821    -5.50952     2.81712    -5.87852      2.70335    -6.45555 
+  -1.58174     9.02951     5.4427      4.76519    -4.34547     6.88498    -0.793327    1.57046    …    2.90745      8.35918    -3.2091     -2.51688    -6.93076     11.3035      0.860013
+   5.05604    -0.943687    2.17729    -5.70002     1.90427   -12.6932     11.0167     -0.580045        5.68458     -7.95445    -4.76866     3.23509    -7.3072       4.71796    -5.11388 
+  -5.17721    13.3868      9.40901    -7.96925    -2.95292    -3.65471     1.74189     2.68854         2.9436       5.52726     4.23394    -1.19932   -11.4087       4.83982    -0.76571 
+  -7.08686    -4.20254     8.60689    -1.49207     5.88754     0.1986     11.035      -1.36975         3.25463     -7.62769     0.281565    1.16153    -5.53881      8.67606     5.69471 
+  -2.41       -4.17537    18.7619    -13.9048      5.12648     3.18966   -12.8727     20.1276          5.86761      9.37836    -9.43994     3.12717     8.99217      3.14791    -1.14907 
+  -7.41526   -15.8674      0.312865   -8.9899     -6.76461    -1.72289    14.8762     -7.46047    …   -7.56876     -4.77355     6.22645    -1.81424   -11.0274      11.9612      0.949182
+   ⋮                                                           ⋮                                  ⋱                                         ⋮                                            
+  12.0235      8.62361    -4.90074     0.369401   -0.597563    1.64814   -16.9592      6.05569         5.66412     -6.59915     0.466041   -4.19671    -1.88561      6.5583     -2.81087 
+ -16.358       6.64443     6.20648    -7.83412    -5.7061    -12.0356     21.8655     -9.56767       -19.048        0.382318    6.11961     1.47244    11.4583       1.7431      8.45353 
+   6.71508    -9.83984     4.21565   -11.3833     13.4253     -3.88877    -8.95658     4.80277    …   12.4515       7.72007    -6.23715    16.6208     -2.89265     -2.5918      1.9923  
+  -6.34514    -0.33819    15.7588      4.44958    -8.32711    -6.025      -7.87514     6.54096        -1.18295     -6.19439     7.00635   -10.6336      9.6994       3.68682     9.14803 
+   8.76774     7.57525    -4.74797    15.3199      1.08129     2.82381   -17.1151      0.0610513      13.4295      -4.0302     18.3345     -7.7923     23.2779      -1.59533     2.25912 
+   3.24214    12.2863     -7.29716     5.96422     1.55467    -7.4213     -6.06082     5.52348         4.95966     -4.23651    -2.20774    -9.26251     4.94756     -7.81571    -4.96848 
+   7.10075    -9.02179     6.44772    -1.32759    -2.32321     2.81775    -1.86997     9.35782         2.52055      9.49496    -9.0169     -5.05295     2.76668     -7.10354     2.39416 
+  -8.22329    -5.63177    14.5244      7.55472     6.49753    -3.91428    -0.40714     5.96077    …   -0.943715    -8.85169    11.1498      9.23636     7.9781     -14.0432      0.32603 
+  -0.514068   -3.02383    -0.640043   -5.94377    -7.1891     -1.15905    -2.26414    -0.0262547     -10.2124       1.35435    -6.74595    -5.30525     3.4856       0.491816    0.998428
+ -13.3024     -6.74817    -6.36506    -1.14303    -4.39477    -2.7062      1.31045     3.48587        -8.62435    -14.2364     -9.11057    -1.29645    -5.84306     -5.46582     5.09357 
+  -4.1471     -8.45232    -4.28617    13.3083    -11.1672     -1.11917     1.08457    12.7048         -5.20692     -6.48717    -3.71627    -1.52226    -0.580721    -1.90388    -8.26873 
+   3.44233    -6.06176    16.6255      4.43167     6.35555    -3.99292     8.6997     -7.06192       -13.5206       0.064584   -3.04337    18.1825    -15.7316       0.478683    0.449569
+   0.83146    -9.27186    17.3888    -12.7845      1.60802     1.49247     0.414132  -15.4033     …  -12.1693      14.2918     -4.81058    15.1308    -10.6605       2.51166    -2.32448 
+  -9.82128     3.03704    10.0534      3.71729   -11.5251     -0.216518    2.4551     -2.83721        -5.00438      2.15473     5.26742    -0.071076  -10.4802      -5.18466    -0.572443
+  -4.44045    -7.83366   -13.5836     10.546      -0.154502   -1.06166     1.02906   -18.7573         -6.1087      -3.45851    20.5571      1.12993    -2.06812     -3.84481     6.32558 
+   6.84167    -5.31608     1.1011     -0.79313     8.42858     2.06081     3.70799    -3.57294        -0.0908282    6.13894    -0.860697    3.6373      7.28366      7.84952     2.4348  
+   3.55469    -7.05994     2.05055     4.43016     0.162858   -0.609934   20.2855     -5.31457       -10.1887       7.03211   -17.1934      2.16146    -5.98378     -3.41463     4.11364 
+   7.66026   -18.9163     13.7711     -8.41781     6.55453     8.98097   -11.9918     -4.42264    …    3.2304       1.98218     7.77607    -0.490764   17.7613       1.2682      7.11993 
+   7.81536    -5.78884   -12.5167      6.83728   -10.391      -0.999197    1.57728    -3.62928        -4.09449     -2.35102     1.70133     0.249539    3.16704     -4.78294    -9.49874 
+  -9.16156    -5.25138     0.956943   -7.68119    -0.153309   -1.28389     3.64492   -10.0316         -8.68775     -4.16999     8.4215     -7.3464     -4.32817      3.59475    10.8253  
+   4.85714     7.353       0.609886   -4.7931     -5.74898    -5.29621     0.451217    7.46492        -2.92471      1.16784   -12.2155      2.49099    -6.0161      -5.25501    -4.18359 
+
+julia> # I need to work on performance when matrix sizes are not divisible by 8
+       # the performance hit is substantial at the moment.
+       a71 = randmat(71);
+
+julia> x71 = randmat(71);
+
+julia> d71 = randmat(71);
+
+julia> ma71 = Matrix(a71); mx71 = Matrix(x71); md71 = Matrix(d71);
+
+julia> @benchmark TriangularMatrices.mul!($d71, $a71, $x71)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     34.835 μs (0.00% GC)
+  median time:      35.487 μs (0.00% GC)
+  mean time:        35.695 μs (0.00% GC)
+  maximum time:     64.791 μs (0.00% GC)
+  --------------
+  samples:          10000
+  evals/sample:     1
+
+julia> @benchmark mul!($md71, $ma71, $mx71)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     33.162 μs (0.00% GC)
+  median time:      33.502 μs (0.00% GC)
+  mean time:        33.689 μs (0.00% GC)
+  maximum time:     65.532 μs (0.00% GC)
+  --------------
+  samples:          10000
+  evals/sample:     1
+
+julia> d71
+71×71 TriangularMatrices.RecursiveMatrix{Float64,71,71,5041}:
+   2.88461    13.1527     -0.604478   -3.71778     4.92991    -9.6764     -4.0238     -5.48035     9.06771   …    4.61533      4.03001     7.88231      2.35589    -1.65738     -3.00703    10.6626  
+  -0.415713   -5.14711    -0.468671    8.60919     0.32238   -16.4875     -4.72265    12.9661     -0.74531       -1.92174      6.24906    -9.38835     -1.19226    -1.74646      7.69309   -10.3297  
+  22.9691     -6.76387     4.24787    -2.23        4.77183   -11.3596      8.12427    -9.53833     4.6676        -8.29416      0.234091   -7.50567    -13.6372      4.51966      0.829005    2.36783 
+   2.04016     8.09141     6.7427     -3.38225     3.06122     7.47327     4.35488     0.548874   22.743          5.6989      -2.65636     3.33655     22.79        5.49075     -6.34749     5.11638 
+   6.4031      2.25117     3.46355    13.2278     -9.27274     4.72975   -16.0407     -7.31259     3.8969       -21.3378      16.646      -9.11691     -1.43727     5.17415      7.58746    -4.55198 
+  15.1749     -2.2659      0.592844   10.8616     -1.88139    -4.00457    -2.57727    -0.71606    14.5048    …   -9.78578      9.08913   -13.4262       8.90146     3.24196      7.68883   -18.0337  
+   1.51693     6.5037     16.6622     -7.88716     9.10909    -2.83054     5.55       -1.82818     4.53996       10.1079      -0.742176    6.57009     10.0617     12.7911      -3.97754     6.68136 
+ -13.9243     -2.81196    -9.33083   -14.6212      2.09495     4.52906     2.34478     1.68506    13.8745        -2.06321    -14.2251      8.58948     10.7293     -5.3702      -4.15573     6.16391 
+ -12.3021      1.45147     3.66252    -7.11786     2.53105    -3.77494     3.10627     6.96672    10.8317         3.12743      5.9521      3.5363       6.98088    -1.50692      3.59759    -0.729954
+  -3.09618     5.367     -14.1078     11.3328      2.50279    -6.32163     6.29788    -0.810553    2.30656       -7.42691     -5.73464    -5.16613      4.0664    -12.2045     -15.9306     -9.36725 
+  -7.29091     7.55539     5.29229     4.27972   -14.6471    -10.2022     -3.78227     4.87154     1.74371   …   -5.86387      5.28578    -9.25668      4.66102     5.17461    -12.3942      9.75948 
+  12.2251    -10.9002     -7.06228    -8.58046    -2.61043    16.2834     14.4231      4.51745     2.87542       -6.10178      1.38688     6.24839     -4.59238    -7.70631    -16.4131      3.27712 
+  -6.6958    -11.1422     -2.34016     2.74771     3.98505    -0.532693  -10.2419     -3.71394     5.87018       -1.98987     -1.64668     1.16001      2.52433    -3.95549     -1.75787    -5.70852 
+  -6.1173    -12.4623     11.8286      3.64735    -2.21388     8.00154     9.62733     8.57611    -2.41147       -0.372428    -7.44932     0.848232    -2.80682    -3.66233      2.81069     5.54869 
+  -5.86077    -2.24086     8.13751    -9.43817    11.1072    -14.8123     -4.20652     4.87731    -3.72228       -8.60604     -1.38289    -6.23494      0.99818    14.7047      19.1917     -0.473748
+ -11.3735    -14.5473    -13.5528     -9.6798      3.17486     2.77126    -4.28364    29.5284     13.0684    …   -6.9416     -12.1586     17.6223       5.30564    -0.477144     3.47318    -8.04753 
+   7.68887     2.26222     5.47198     2.42321    -8.21274     8.06444    -6.29665    -2.12428   -12.7466        -1.158       -4.4893    -11.0745       0.291401  -12.0569     -15.7038     -7.88776 
+  -1.03037    12.5186     12.0106      9.88855     9.30448    -8.58433   -15.1824     -2.44688   -11.7805         3.86954     -2.37665    -4.071       -0.275846   11.2442      20.0066      8.71939 
+  -2.44157    -9.45909    -3.74304    -9.42942    -3.40827    10.2346      3.45672     1.63745     0.441058       6.36325      9.38505     6.40864     -1.55712    -7.27721     -9.86983    15.5477  
+ -14.9747      1.25319   -18.7662      1.96828   -10.8721     13.9373     -7.30796   -10.6062      8.94535       -7.77374     -1.94369     4.99984      9.49446    -7.07498     -5.89449     1.82745 
+ -13.8405    -15.4527     -6.52327    12.0439      5.81887     6.48765    -8.3768    -11.2011      2.9016    …   11.449      -10.5834     -1.38175     -9.10197     6.22257     10.427       3.01115 
+   ⋮                                                           ⋮                                             ⋱                 ⋮                                                             ⋮       
+   3.04187    -4.61368     0.746034    2.59437     3.10995   -22.4398     17.8279      9.91316     3.59292   …   -6.3283      12.9504      6.76628     -2.41733   -11.0154       3.29754    -4.42795 
+   9.52346    -0.841875   -3.67814    -9.05782     7.23813     3.24436    -1.05737     1.33796    -3.33412        0.925973   -10.7195     10.0687       8.39513    -5.46889     -2.28146     5.85186 
+  -8.99656     8.12188     9.07615    -2.95841   -11.3036      3.45762    -4.75698    13.8649     -8.17745       -1.98298     15.1296     -0.437304    12.6015      0.0191779    1.64242    -9.56025 
+   1.97225   -10.773       9.51307    -7.46273    -5.44927    12.2743     12.2111     -1.32758     2.67879        3.02356      4.49877    13.7941      -6.42726     3.8123      11.7848     -0.17478 
+ -15.804      -2.95277   -11.614      10.8151     -6.81635    -9.57801     3.97678     5.19117     4.31515        9.095        6.67326    -1.0317      -8.83743     4.23313     -3.34287   -10.6124  
+  -4.61725    -1.32483    -4.67241     9.95203    11.1245     -8.05643   -12.0215      1.58959     6.55755   …   -1.37602    -10.5833    -14.5199      -1.07167    12.7793      -5.27762     5.9688  
+ -23.28        7.75238    -2.76743    -5.45741     4.44523   -13.4946     -3.60575   -19.556      -4.24866       12.973       -0.184154   -1.54732     -1.79919     4.07656      8.57456    -1.99301 
+   6.25462   -15.127       2.28252    -3.67125    -5.36837    16.9142     -1.7807     10.6645     -7.18707       -6.91198     -2.15339    -7.03521     -5.92309    -3.36203     12.4077      0.273558
+   5.49005     6.50478    -0.237303    9.75374     5.67565     1.18918    -1.50026     6.79554    -1.8523        -5.91494     -4.83911    -7.86102     10.4011      3.81492     -1.73682     7.43481 
+  -0.862689  -17.8935     -1.64381     2.89094   -21.3053      7.15888    -5.54535    25.5079     10.1684        -1.40368      2.15418     8.68141      2.2035    -18.3427      -5.02925   -12.74    
+ -15.8732      2.99699    -1.91222    -4.97817    -5.6167     -4.62665    -2.93321    -7.16692     0.646365  …   -6.36109      7.80887   -13.4393      -0.857058    4.92621      0.50396     4.05378 
+  17.8912     -8.76928     4.06691   -10.9045     12.058      -3.97315     3.15295   -12.6322      9.35433       18.5581      -4.17824   -10.0104      -3.38936    -5.43718      5.69687     8.17907 
+  -3.04952    -6.08788    -5.35401     5.47537     0.799503    5.22613     8.20629     0.858432   13.2674         2.86622    -11.1794      0.0160583    8.08098    -3.81947     -6.23317   -10.8742  
+  -3.91573     1.6501      7.17472   -12.9464     -2.34951    22.5996     -5.36613    -8.49312     6.56039        5.01305      5.98953     5.20964     16.6127      3.20338     -4.47415    -0.373151
+  -2.1589      7.67356     2.87619    -6.72206    12.5701     -5.44726     0.978837   -2.33736    -2.76551       11.5438      11.537       4.03637      1.13799    10.377       -2.078       3.68727 
+  10.1225    -14.4375     -3.54864    -1.81843    -8.85091     0.715349   -1.84742    11.8952      7.90288   …    1.39072     -1.72639    -3.75839      5.23589    -7.32266     -5.37214    -9.06492 
+  16.5495     -3.67964    -9.38101     0.217488    2.33657    -7.81739    -5.71377    21.0102     10.2528        -4.62279     -1.45617     8.01931      9.57051    -5.62602     -0.595642    4.83797 
+   3.29929     5.09099     8.07751     3.2027     -3.71649    -5.87937   -11.0265      8.18941    -5.46943        0.0903838   15.7265     15.7843       4.21871     4.99087     -0.250506   -7.21731 
+   6.57979   -20.4226     -2.25031     2.7324      6.00801     1.46608   -10.2877      4.61838    -7.37805        9.72454    -10.1131     13.5137      -0.917661   -0.846129    -4.46483     7.9916  
+  -1.24585    -0.708996    2.34364    -3.29827    -2.12965   -12.5253      6.67743    22.269       4.93347       -2.57281      4.70592     3.29196      8.55486     9.57854      6.45973    -2.81883 
+   5.48159    -0.140945   -1.88974   -16.3118      1.8939      0.552184    7.79581    -5.54993    -1.01846   …    6.33123     -4.46246    -5.21885      3.10343    -0.665184    -9.36354    -1.30978 
+
+julia> md71
+71×71 Array{Float64,2}:
+   2.88461    13.1527     -0.604478   -3.71778     4.92991    -9.6764     -4.0238     -5.48035     9.06771   …    4.61533      4.03001     7.88231      2.35589    -1.65738     -3.00703    10.6626  
+  -0.415713   -5.14711    -0.468671    8.60919     0.32238   -16.4875     -4.72265    12.9661     -0.74531       -1.92174      6.24906    -9.38835     -1.19226    -1.74646      7.69309   -10.3297  
+  22.9691     -6.76387     4.24787    -2.23        4.77183   -11.3596      8.12427    -9.53833     4.6676        -8.29416      0.234091   -7.50567    -13.6372      4.51966      0.829005    2.36783 
+   2.04016     8.09141     6.7427     -3.38225     3.06122     7.47327     4.35488     0.548874   22.743          5.6989      -2.65636     3.33655     22.79        5.49075     -6.34749     5.11638 
+   6.4031      2.25117     3.46355    13.2278     -9.27274     4.72975   -16.0407     -7.31259     3.8969       -21.3378      16.646      -9.11691     -1.43727     5.17415      7.58746    -4.55198 
+  15.1749     -2.2659      0.592844   10.8616     -1.88139    -4.00457    -2.57727    -0.71606    14.5048    …   -9.78578      9.08913   -13.4262       8.90146     3.24196      7.68883   -18.0337  
+   1.51693     6.5037     16.6622     -7.88716     9.10909    -2.83054     5.55       -1.82818     4.53996       10.1079      -0.742176    6.57009     10.0617     12.7911      -3.97754     6.68136 
+ -13.9243     -2.81196    -9.33083   -14.6212      2.09495     4.52906     2.34478     1.68506    13.8745        -2.06321    -14.2251      8.58948     10.7293     -5.3702      -4.15573     6.16391 
+ -12.3021      1.45147     3.66252    -7.11786     2.53105    -3.77494     3.10627     6.96672    10.8317         3.12743      5.9521      3.5363       6.98088    -1.50692      3.59759    -0.729954
+  -3.09618     5.367     -14.1078     11.3328      2.50279    -6.32163     6.29788    -0.810553    2.30656       -7.42691     -5.73464    -5.16613      4.0664    -12.2045     -15.9306     -9.36725 
+  -7.29091     7.55539     5.29229     4.27972   -14.6471    -10.2022     -3.78227     4.87154     1.74371   …   -5.86387      5.28578    -9.25668      4.66102     5.17461    -12.3942      9.75948 
+  12.2251    -10.9002     -7.06228    -8.58046    -2.61043    16.2834     14.4231      4.51745     2.87542       -6.10178      1.38688     6.24839     -4.59238    -7.70631    -16.4131      3.27712 
+  -6.6958    -11.1422     -2.34016     2.74771     3.98505    -0.532693  -10.2419     -3.71394     5.87018       -1.98987     -1.64668     1.16001      2.52433    -3.95549     -1.75787    -5.70852 
+  -6.1173    -12.4623     11.8286      3.64735    -2.21388     8.00154     9.62733     8.57611    -2.41147       -0.372428    -7.44932     0.848232    -2.80682    -3.66233      2.81069     5.54869 
+  -5.86077    -2.24086     8.13751    -9.43817    11.1072    -14.8123     -4.20652     4.87731    -3.72228       -8.60604     -1.38289    -6.23494      0.99818    14.7047      19.1917     -0.473748
+ -11.3735    -14.5473    -13.5528     -9.6798      3.17486     2.77126    -4.28364    29.5284     13.0684    …   -6.9416     -12.1586     17.6223       5.30564    -0.477144     3.47318    -8.04753 
+   7.68887     2.26222     5.47198     2.42321    -8.21274     8.06444    -6.29665    -2.12428   -12.7466        -1.158       -4.4893    -11.0745       0.291401  -12.0569     -15.7038     -7.88776 
+  -1.03037    12.5186     12.0106      9.88855     9.30448    -8.58433   -15.1824     -2.44688   -11.7805         3.86954     -2.37665    -4.071       -0.275846   11.2442      20.0066      8.71939 
+  -2.44157    -9.45909    -3.74304    -9.42942    -3.40827    10.2346      3.45672     1.63745     0.441058       6.36325      9.38505     6.40864     -1.55712    -7.27721     -9.86983    15.5477  
+ -14.9747      1.25319   -18.7662      1.96828   -10.8721     13.9373     -7.30796   -10.6062      8.94535       -7.77374     -1.94369     4.99984      9.49446    -7.07498     -5.89449     1.82745 
+ -13.8405    -15.4527     -6.52327    12.0439      5.81887     6.48765    -8.3768    -11.2011      2.9016    …   11.449      -10.5834     -1.38175     -9.10197     6.22257     10.427       3.01115 
+   ⋮                                                           ⋮                                             ⋱                 ⋮                                                             ⋮       
+   3.04187    -4.61368     0.746034    2.59437     3.10995   -22.4398     17.8279      9.91316     3.59292   …   -6.3283      12.9504      6.76628     -2.41733   -11.0154       3.29754    -4.42795 
+   9.52346    -0.841875   -3.67814    -9.05782     7.23813     3.24436    -1.05737     1.33796    -3.33412        0.925973   -10.7195     10.0687       8.39513    -5.46889     -2.28146     5.85186 
+  -8.99656     8.12188     9.07615    -2.95841   -11.3036      3.45762    -4.75698    13.8649     -8.17745       -1.98298     15.1296     -0.437304    12.6015      0.0191779    1.64242    -9.56025 
+   1.97225   -10.773       9.51307    -7.46273    -5.44927    12.2743     12.2111     -1.32758     2.67879        3.02356      4.49877    13.7941      -6.42726     3.8123      11.7848     -0.17478 
+ -15.804      -2.95277   -11.614      10.8151     -6.81635    -9.57801     3.97678     5.19117     4.31515        9.095        6.67326    -1.0317      -8.83743     4.23313     -3.34287   -10.6124  
+  -4.61725    -1.32483    -4.67241     9.95203    11.1245     -8.05643   -12.0215      1.58959     6.55755   …   -1.37602    -10.5833    -14.5199      -1.07167    12.7793      -5.27762     5.9688  
+ -23.28        7.75238    -2.76743    -5.45741     4.44523   -13.4946     -3.60575   -19.556      -4.24866       12.973       -0.184154   -1.54732     -1.79919     4.07656      8.57456    -1.99301 
+   6.25462   -15.127       2.28252    -3.67125    -5.36837    16.9142     -1.7807     10.6645     -7.18707       -6.91198     -2.15339    -7.03521     -5.92309    -3.36203     12.4077      0.273558
+   5.49005     6.50478    -0.237303    9.75374     5.67565     1.18918    -1.50026     6.79554    -1.8523        -5.91494     -4.83911    -7.86102     10.4011      3.81492     -1.73682     7.43481 
+  -0.862689  -17.8935     -1.64381     2.89094   -21.3053      7.15888    -5.54535    25.5079     10.1684        -1.40368      2.15418     8.68141      2.2035    -18.3427      -5.02925   -12.74    
+ -15.8732      2.99699    -1.91222    -4.97817    -5.6167     -4.62665    -2.93321    -7.16692     0.646365  …   -6.36109      7.80887   -13.4393      -0.857058    4.92621      0.50396     4.05378 
+  17.8912     -8.76928     4.06691   -10.9045     12.058      -3.97315     3.15295   -12.6322      9.35433       18.5581      -4.17824   -10.0104      -3.38936    -5.43718      5.69687     8.17907 
+  -3.04952    -6.08788    -5.35401     5.47537     0.799503    5.22613     8.20629     0.858432   13.2674         2.86622    -11.1794      0.0160583    8.08098    -3.81947     -6.23317   -10.8742  
+  -3.91573     1.6501      7.17472   -12.9464     -2.34951    22.5996     -5.36613    -8.49312     6.56039        5.01305      5.98953     5.20964     16.6127      3.20338     -4.47415    -0.373151
+  -2.1589      7.67356     2.87619    -6.72206    12.5701     -5.44726     0.978837   -2.33736    -2.76551       11.5438      11.537       4.03637      1.13799    10.377       -2.078       3.68727 
+  10.1225    -14.4375     -3.54864    -1.81843    -8.85091     0.715349   -1.84742    11.8952      7.90288   …    1.39072     -1.72639    -3.75839      5.23589    -7.32266     -5.37214    -9.06492 
+  16.5495     -3.67964    -9.38101     0.217488    2.33657    -7.81739    -5.71377    21.0102     10.2528        -4.62279     -1.45617     8.01931      9.57051    -5.62602     -0.595642    4.83797 
+   3.29929     5.09099     8.07751     3.2027     -3.71649    -5.87937   -11.0265      8.18941    -5.46943        0.0903838   15.7265     15.7843       4.21871     4.99087     -0.250506   -7.21731 
+   6.57979   -20.4226     -2.25031     2.7324      6.00801     1.46608   -10.2877      4.61838    -7.37805        9.72454    -10.1131     13.5137      -0.917661   -0.846129    -4.46483     7.9916  
+  -1.24585    -0.708996    2.34364    -3.29827    -2.12965   -12.5253      6.67743    22.269       4.93347       -2.57281      4.70592     3.29196      8.55486     9.57854      6.45973    -2.81883 
+   5.48159    -0.140945   -1.88974   -16.3118      1.8939      0.552184    7.79581    -5.54993    -1.01846   …    6.33123     -4.46246    -5.21885      3.10343    -0.665184    -9.36354    -1.30978 
+
+julia> a72 = randmat(72);
+
+julia> x72 = randmat(72);
+
+julia> d72 = randmat(72);
+
+julia> ma72 = Matrix(a72); mx72 = Matrix(x72); md72 = Matrix(d72);
+
+julia> @benchmark TriangularMatrices.mul!($d72, $a72, $x72)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     26.519 μs (0.00% GC)
+  median time:      27.040 μs (0.00% GC)
+  mean time:        27.141 μs (0.00% GC)
+  maximum time:     42.300 μs (0.00% GC)
+  --------------
+  samples:          10000
+  evals/sample:     1
+
+julia> @benchmark mul!($md72, $ma72, $mx72)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     30.618 μs (0.00% GC)
+  median time:      30.927 μs (0.00% GC)
+  mean time:        31.142 μs (0.00% GC)
+  maximum time:     56.276 μs (0.00% GC)
+  --------------
+  samples:          10000
+  evals/sample:     1
+
+julia> d72
+72×72 TriangularMatrices.RecursiveMatrix{Float64,72,72,5184}:
+  11.7224      0.0289174   -4.34674    11.734       -2.9189     -0.418324    2.19299     6.62228   …    6.15327     9.29428     0.0613658   -4.16246    -3.70188    -0.494133    10.5959   
+  -4.51213     5.733       -9.33259     3.97888     -3.37324    -1.90997     6.27446    16.0745        -1.42911    -1.01747    -8.46933     20.5974      4.2303     -4.30961     -9.98544  
+  -4.55758    -8.97377    -14.0119     -6.8577       2.55376    -3.42625    -5.16471    -4.22636       16.4759     11.8175      4.69227      1.95641    12.4764    -17.3603      -6.31548  
+   1.99009    14.9147      15.4054     -3.6798      15.0248     23.0294      4.77093    -9.16604        9.23948     9.76846    -2.67291      5.63245    15.8399     11.3909      11.0356   
+   7.53767    -4.15086      5.40729     0.404324    14.51        0.449761    5.98864     1.93164        9.55012     6.74094    -3.285       -3.70204    10.4013     22.0652       4.64157  
+ -11.8931     -7.69734     -0.628746   -6.68011     -7.14174    -6.87186     5.3542    -10.6732    …   -8.37841    -2.19502    -6.81385     10.9026      4.20809   -10.826       -7.275    
+  -3.63874    -0.638766    12.6056     -0.0869457  -13.2756     -4.49522     4.33808    -7.76352       12.3612     -4.18077   -10.399        5.30731   -24.8877     -8.0968      -8.82325  
+ -11.7272      9.50718     -4.48591     0.561986     4.27286    -0.796741   -9.10321     2.33091       -1.14204   -11.9898     13.4377      13.7146      3.21628     6.80165     -2.17413  
+  -1.13605    -3.14134    -24.4696     -9.07617      9.2752      0.786501    4.18141   -12.7959         7.91598     2.84207     8.54653     11.7407     -5.82298   -10.3366      -7.84192  
+   1.87327   -11.4368       4.01656     3.85905      0.665977   -2.31719    -5.58105    -1.61117        3.37829     6.34653   -14.9463      -8.38438   -13.7857     -8.96176     -2.88181  
+  -1.03086    -3.49178     -7.72441     1.86214    -12.5293      2.85768     9.34144    -4.90893   …    4.26278    -4.1968    -12.9876      -1.02729    11.8897     12.9727       5.616    
+   8.53474   -16.6303      -4.25193    -3.59664     -0.741587   14.8746     20.8595      5.17809        0.385622  -19.6025      4.70672    -10.1517     -0.654318    1.69653     -0.641487 
+   4.98516    13.6522      27.0876      8.68578    -16.0481    -10.8998     -6.37209     8.50378       -4.00424    -0.275174   -6.79445     -3.4895    -21.3338     -6.81759      6.81378  
+ -18.99       -0.676577   -13.5161      9.72746      0.362453  -11.4592     -4.89076    -3.57252       -7.09476     1.93181     8.88293      5.20324     5.86341   -10.3662      -2.24405  
+  -2.06703     4.77891     15.9181      7.47463    -16.7787      7.16699    -0.995537   -7.36624        5.04511    -7.76123     7.543       -3.75362    -5.28334     7.13909      8.07123  
+   4.84733     8.5082       9.38808     8.70073    -10.6014      1.71983    -9.57873     5.80951   …    5.34956    24.7305    -10.4958      -3.46537    -1.71302    -9.29998     -5.62729  
+  11.2614    -11.6456      -0.769038   -0.358671    10.0111      7.5095      2.36556   -14.9352        -3.37393     7.97227    -5.15985    -12.6021    -19.6586    -10.9746      12.0301   
+   1.45644     6.31908     -0.568733    9.33392     -8.97103   -10.1687      4.01512    -2.2081        -6.80817    -1.12575    -1.59314      0.444877    6.00299    -5.87399     -1.50412  
+   1.59473    -6.69316     -0.445943    0.818027    15.2203      4.78378    13.5774      5.95125        0.519686    1.09105   -18.3546       1.75419     7.62939   -12.6402     -10.4738   
+  -4.85851     1.56947     -8.3888    -18.0468       1.54804    -7.55403    -8.81411   -13.7244        12.557       0.665588    5.3008      -2.94366     6.57611    12.7425       4.17259  
+   3.77477     4.10521      1.42632     8.73386     -8.53205    -2.70543    11.9139      2.05497   …   -4.74448    12.6081      1.73792      9.46749    -1.94985     4.34943     -3.75605  
+   ⋮                                                             ⋮                                 ⋱    ⋮                                                            ⋮                     
+   3.0529     10.4677      -2.10571    12.5879       6.63589     0.897987   -1.40879     9.84537       -0.505729   -2.67343   -12.6176      -8.21559   -16.5325     -2.51548     -1.73403  
+   6.8355     -4.31918      2.09012    -2.75943      1.40209    -0.523731    4.76401     2.95747      -17.8165      5.03915    10.9382       1.3083     -7.0316     -0.573862    -6.10319  
+  -0.560812   14.5804      11.7944     11.9231      10.2521     -5.90986     9.86083     4.83724      -16.9397      5.19138   -11.7451      -0.724041   -3.49573     0.983388    -0.0903422
+  -2.75467     5.0119      -7.36201   -15.8174       7.99611     6.05703    -9.14246    -4.53667       -8.25856    -8.80599    -6.68509     -7.44528     0.913622    0.468029    -1.09885  
+   8.69496     1.28737     12.755       9.20342     -0.159307   11.1843      4.06736   -12.2378    …   -9.72671     5.51374    12.2559      -2.88252    -7.32855    -6.85836      5.33551  
+  -3.69778    -3.00386     -5.54249    11.4098     -13.8688     -7.49932   -13.9897      3.68143        3.03171    17.5226    -20.176        7.52645     1.28535     3.67475      2.30653  
+   4.57858    -2.13336     -7.4986     -0.422106     9.68358     4.00837    -0.604849  -12.5814        -8.6139      8.19407     5.94611     -1.81812    -0.896982    6.00275     -3.84464  
+  -7.96466     0.910336     0.654516   -3.16648     -2.58939     1.04597    -8.54403     9.33774       10.1424    -15.8727      9.92941     14.24        2.18503     8.71138      0.908123 
+   1.35601     7.57623     13.762      23.2942     -10.8398     -2.48308    -3.24428    18.4032       -16.9342      4.04465   -10.243       -5.1657      1.82405    -5.26257      4.66386  
+   1.0645     -1.7652     -24.2734      0.973985    -4.26037     5.14542    13.201      -6.26191   …  -10.4697     16.3529     -5.63949      9.88794     0.497938   -9.50451      5.32322  
+   1.07408   -14.5344       2.28325     8.25855      3.38133     0.811046   -5.19222     2.32286       10.9033     -5.51667     1.78479     -1.67581   -11.9991    -20.6701       0.413587 
+   3.543       7.54104     -1.64436    -5.06888     -2.31678     2.93027    -0.761961    4.06458        9.04943     2.50181     1.17096      9.48922   -13.7142      4.87656     -1.33003  
+  -8.15008   -13.3059     -13.5671     10.0619       7.3523     -7.8355      3.36786     7.80286      -25.3134    -13.3405    -15.6238      -7.13895    -5.00649     1.32074     11.9156   
+  -8.73403     6.33507      7.86474   -12.5808       4.44499   -10.2772     -4.34826    -3.40614        3.59265     4.01735    10.9249       3.03555     3.95224     7.63325      1.76888  
+   5.47069    10.3887       7.5377      4.47812     -3.39665    -1.6593     -9.73699    -1.02802   …   -5.41302     3.55845    -2.38843    -19.4575     -7.23061     0.0720406    1.49868  
+  10.783       0.950991    -5.97935     9.28149    -15.5014     -2.0616     20.0185     -7.96968      -11.8225      5.24027    -7.77291      3.72214    -6.06966    15.6915       5.71019  
+ -11.5478      2.25702     11.9666     16.1836      -6.73354    -6.34689    -5.04601     8.0613       -12.4429      9.62037    -3.57688      5.38736     1.73401   -15.9527      -3.86903  
+  -4.5072     13.5631       4.20631   -11.8207      -1.4673     -9.14588    -8.39858     0.612861      11.6641      6.07614    -6.10362     11.4461      5.05408     3.91226     15.1177   
+  18.7112      1.96251     12.1046    -12.0679      -2.01764    -3.89698     6.19772     3.86038       -3.12368   -12.8854     -8.97084      1.84325    -9.6535      6.0276       1.43427  
+ -14.5331      5.06065    -13.6896     -6.17766     -0.602018   -5.7902    -14.2561     -9.20734   …   -8.24982   -16.6103      3.00263      1.11079    10.7505     -7.62809     -1.47574  
+  11.1205    -11.5212       6.11293    -8.7379     -28.8263     -7.62274    15.7075     -9.04741        6.78332   -10.3994    -19.2136      -6.05409    -9.22154     7.86733      5.50021  
+
+julia> md72
+72×72 Array{Float64,2}:
+  11.7224      0.0289174   -4.34674    11.734       -2.9189     -0.418324    2.19299     6.62228   …    6.15327     9.29428     0.0613658   -4.16246    -3.70188    -0.494133    10.5959   
+  -4.51213     5.733       -9.33259     3.97888     -3.37324    -1.90997     6.27446    16.0745        -1.42911    -1.01747    -8.46933     20.5974      4.2303     -4.30961     -9.98544  
+  -4.55758    -8.97377    -14.0119     -6.8577       2.55376    -3.42625    -5.16471    -4.22636       16.4759     11.8175      4.69227      1.95641    12.4764    -17.3603      -6.31548  
+   1.99009    14.9147      15.4054     -3.6798      15.0248     23.0294      4.77093    -9.16604        9.23948     9.76846    -2.67291      5.63245    15.8399     11.3909      11.0356   
+   7.53767    -4.15086      5.40729     0.404324    14.51        0.449761    5.98864     1.93164        9.55012     6.74094    -3.285       -3.70204    10.4013     22.0652       4.64157  
+ -11.8931     -7.69734     -0.628746   -6.68011     -7.14174    -6.87186     5.3542    -10.6732    …   -8.37841    -2.19502    -6.81385     10.9026      4.20809   -10.826       -7.275    
+  -3.63874    -0.638766    12.6056     -0.0869457  -13.2756     -4.49522     4.33808    -7.76352       12.3612     -4.18077   -10.399        5.30731   -24.8877     -8.0968      -8.82325  
+ -11.7272      9.50718     -4.48591     0.561986     4.27286    -0.796741   -9.10321     2.33091       -1.14204   -11.9898     13.4377      13.7146      3.21628     6.80165     -2.17413  
+  -1.13605    -3.14134    -24.4696     -9.07617      9.2752      0.786501    4.18141   -12.7959         7.91598     2.84207     8.54653     11.7407     -5.82298   -10.3366      -7.84192  
+   1.87327   -11.4368       4.01656     3.85905      0.665977   -2.31719    -5.58105    -1.61117        3.37829     6.34653   -14.9463      -8.38438   -13.7857     -8.96176     -2.88181  
+  -1.03086    -3.49178     -7.72441     1.86214    -12.5293      2.85768     9.34144    -4.90893   …    4.26278    -4.1968    -12.9876      -1.02729    11.8897     12.9727       5.616    
+   8.53474   -16.6303      -4.25193    -3.59664     -0.741587   14.8746     20.8595      5.17809        0.385622  -19.6025      4.70672    -10.1517     -0.654318    1.69653     -0.641487 
+   4.98516    13.6522      27.0876      8.68578    -16.0481    -10.8998     -6.37209     8.50378       -4.00424    -0.275174   -6.79445     -3.4895    -21.3338     -6.81759      6.81378  
+ -18.99       -0.676577   -13.5161      9.72746      0.362453  -11.4592     -4.89076    -3.57252       -7.09476     1.93181     8.88293      5.20324     5.86341   -10.3662      -2.24405  
+  -2.06703     4.77891     15.9181      7.47463    -16.7787      7.16699    -0.995537   -7.36624        5.04511    -7.76123     7.543       -3.75362    -5.28334     7.13909      8.07123  
+   4.84733     8.5082       9.38808     8.70073    -10.6014      1.71983    -9.57873     5.80951   …    5.34956    24.7305    -10.4958      -3.46537    -1.71302    -9.29998     -5.62729  
+  11.2614    -11.6456      -0.769038   -0.358671    10.0111      7.5095      2.36556   -14.9352        -3.37393     7.97227    -5.15985    -12.6021    -19.6586    -10.9746      12.0301   
+   1.45644     6.31908     -0.568733    9.33392     -8.97103   -10.1687      4.01512    -2.2081        -6.80817    -1.12575    -1.59314      0.444877    6.00299    -5.87399     -1.50412  
+   1.59473    -6.69316     -0.445943    0.818027    15.2203      4.78378    13.5774      5.95125        0.519686    1.09105   -18.3546       1.75419     7.62939   -12.6402     -10.4738   
+  -4.85851     1.56947     -8.3888    -18.0468       1.54804    -7.55403    -8.81411   -13.7244        12.557       0.665588    5.3008      -2.94366     6.57611    12.7425       4.17259  
+   3.77477     4.10521      1.42632     8.73386     -8.53205    -2.70543    11.9139      2.05497   …   -4.74448    12.6081      1.73792      9.46749    -1.94985     4.34943     -3.75605  
+   ⋮                                                             ⋮                                 ⋱    ⋮                                                            ⋮                     
+   3.0529     10.4677      -2.10571    12.5879       6.63589     0.897987   -1.40879     9.84537       -0.505729   -2.67343   -12.6176      -8.21559   -16.5325     -2.51548     -1.73403  
+   6.8355     -4.31918      2.09012    -2.75943      1.40209    -0.523731    4.76401     2.95747      -17.8165      5.03915    10.9382       1.3083     -7.0316     -0.573862    -6.10319  
+  -0.560812   14.5804      11.7944     11.9231      10.2521     -5.90986     9.86083     4.83724      -16.9397      5.19138   -11.7451      -0.724041   -3.49573     0.983388    -0.0903422
+  -2.75467     5.0119      -7.36201   -15.8174       7.99611     6.05703    -9.14246    -4.53667       -8.25856    -8.80599    -6.68509     -7.44528     0.913622    0.468029    -1.09885  
+   8.69496     1.28737     12.755       9.20342     -0.159307   11.1843      4.06736   -12.2378    …   -9.72671     5.51374    12.2559      -2.88252    -7.32855    -6.85836      5.33551  
+  -3.69778    -3.00386     -5.54249    11.4098     -13.8688     -7.49932   -13.9897      3.68143        3.03171    17.5226    -20.176        7.52645     1.28535     3.67475      2.30653  
+   4.57858    -2.13336     -7.4986     -0.422106     9.68358     4.00837    -0.604849  -12.5814        -8.6139      8.19407     5.94611     -1.81812    -0.896982    6.00275     -3.84464  
+  -7.96466     0.910336     0.654516   -3.16648     -2.58939     1.04597    -8.54403     9.33774       10.1424    -15.8727      9.92941     14.24        2.18503     8.71138      0.908123 
+   1.35601     7.57623     13.762      23.2942     -10.8398     -2.48308    -3.24428    18.4032       -16.9342      4.04465   -10.243       -5.1657      1.82405    -5.26257      4.66386  
+   1.0645     -1.7652     -24.2734      0.973985    -4.26037     5.14542    13.201      -6.26191   …  -10.4697     16.3529     -5.63949      9.88794     0.497938   -9.50451      5.32322  
+   1.07408   -14.5344       2.28325     8.25855      3.38133     0.811046   -5.19222     2.32286       10.9033     -5.51667     1.78479     -1.67581   -11.9991    -20.6701       0.413587 
+   3.543       7.54104     -1.64436    -5.06888     -2.31678     2.93027    -0.761961    4.06458        9.04943     2.50181     1.17096      9.48922   -13.7142      4.87656     -1.33003  
+  -8.15008   -13.3059     -13.5671     10.0619       7.3523     -7.8355      3.36786     7.80286      -25.3134    -13.3405    -15.6238      -7.13895    -5.00649     1.32074     11.9156   
+  -8.73403     6.33507      7.86474   -12.5808       4.44499   -10.2772     -4.34826    -3.40614        3.59265     4.01735    10.9249       3.03555     3.95224     7.63325      1.76888  
+   5.47069    10.3887       7.5377      4.47812     -3.39665    -1.6593     -9.73699    -1.02802   …   -5.41302     3.55845    -2.38843    -19.4575     -7.23061     0.0720406    1.49868  
+  10.783       0.950991    -5.97935     9.28149    -15.5014     -2.0616     20.0185     -7.96968      -11.8225      5.24027    -7.77291      3.72214    -6.06966    15.6915       5.71019  
+ -11.5478      2.25702     11.9666     16.1836      -6.73354    -6.34689    -5.04601     8.0613       -12.4429      9.62037    -3.57688      5.38736     1.73401   -15.9527      -3.86903  
+  -4.5072     13.5631       4.20631   -11.8207      -1.4673     -9.14588    -8.39858     0.612861      11.6641      6.07614    -6.10362     11.4461      5.05408     3.91226     15.1177   
+  18.7112      1.96251     12.1046    -12.0679      -2.01764    -3.89698     6.19772     3.86038       -3.12368   -12.8854     -8.97084      1.84325    -9.6535      6.0276       1.43427  
+ -14.5331      5.06065    -13.6896     -6.17766     -0.602018   -5.7902    -14.2561     -9.20734   …   -8.24982   -16.6103      3.00263      1.11079    10.7505     -7.62809     -1.47574  
+  11.1205    -11.5212       6.11293    -8.7379     -28.8263     -7.62274    15.7075     -9.04741        6.78332   -10.3994    -19.2136      -6.05409    -9.22154     7.86733      5.50021  
+
+julia> a128 = randmat(128);
+
+julia> x128 = randmat(128);
+
+julia> d128 = randmat(128);
+
+julia> ma128 = Matrix(a128); mx128 = Matrix(x128); md128 = Matrix(d128);
+
+julia> @benchmark TriangularMatrices.mul!($d128, $a128, $x128)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     152.225 μs (0.00% GC)
+  median time:      154.880 μs (0.00% GC)
+  mean time:        155.511 μs (0.00% GC)
+  maximum time:     188.813 μs (0.00% GC)
+  --------------
+  samples:          10000
+  evals/sample:     1
+
+julia> @benchmark mul!($md128, $ma128, $mx128)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     157.655 μs (0.00% GC)
+  median time:      159.669 μs (0.00% GC)
+  mean time:        160.479 μs (0.00% GC)
+  maximum time:     216.936 μs (0.00% GC)
+  --------------
+  samples:          10000
+  evals/sample:     1
+
+julia> # The print function hangs above these sizes.
+       # d128
+       # md128
+
+       a256 = randmat(256);
+
+julia> x256 = randmat(256);
+
+julia> d256 = randmat(256);
+
+julia> # The Matrix function hangs at these sizes.
+       # ma256 = Matrix(a256); mx256 = Matrix(x256); md256 = Matrix(d256);
+       ma256, mx256, md256 = randn(256,256), randn(256,256), randn(256,256);
+
+julia> @benchmark TriangularMatrices.mul!($d256, $a256, $x256)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     1.235 ms (0.00% GC)
+  median time:      1.249 ms (0.00% GC)
+  mean time:        1.255 ms (0.00% GC)
+  maximum time:     1.408 ms (0.00% GC)
+  --------------
+  samples:          3982
+  evals/sample:     1
+
+julia> @benchmark mul!($md256, $ma256, $mx256)
+BenchmarkTools.Trial: 
+  memory estimate:  0 bytes
+  allocs estimate:  0
+  --------------
+  minimum time:     1.174 ms (0.00% GC)
+  median time:      1.185 ms (0.00% GC)
+  mean time:        1.191 ms (0.00% GC)
+  maximum time:     1.382 ms (0.00% GC)
+  --------------
+  samples:          4197
+  evals/sample:     1
+```
+
+In my opinion, this is holding on really well.
+Too bad printing is much more complicated than matrix multiplication, but I'm sure I can figure that out someday.
+
+Of course, with threading OpenBLAS would do increasingly well starting at these sizes.
+Once Julia's threading is reworked, it would probably be worth handing here.

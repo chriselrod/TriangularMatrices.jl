@@ -354,12 +354,12 @@ end
     end
     extract_linear!(qa, LA, :A) # second arg is the name of the variable we're extracting.
     extract_linear!(qa, LB, :A, :B, 0, LA)
-    extract_linear!(qa, LB, :A, :C, 0, LA + LB)
+    extract_linear!(qa, LC, :A, :C, 0, LA + LB)
     N = Nax + Nby + Ncz
     for p = 1:P
         extract_linear!(qa, Nax, :X, :X, (p-1)*Nax, (p-1)*N             )
         extract_linear!(qa, Nby, :X, :Y, (p-1)*Nby, (p-1)*N + Nax       )
-        extract_linear!(qa, Nby, :X, :Z, (p-1)*Ncz, (p-1)*N + Nax + Nby )
+        extract_linear!(qa, Ncz, :X, :Z, (p-1)*Ncz, (p-1)*N + Nax + Nby )
     end
     broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :X, :D, id_symbol, id_symbol, :(=) )
     LD = M*P
@@ -752,12 +752,12 @@ Also, I do need to type on which D block I am inserting elements into...
 function block_kernel(::Type{T}, M, N, P, tA::Val{false}, tX::Val{false}, eq = :(=), LA = M*N, LX = N*P, LD = M*P) where T
     q, qa = create_quote()
 
-    halfcutoff = cutoff ÷ 2
-
     Mblocks = cld(M, cutoff)
     Nblocks = cld(N, cutoff)
     Pblocks = cld(P, cutoff) #We split these down to 
     
+    skip_a_halfblock = 2Pblocks != cld(P, halfcutoff)
+
     # 
     # I want this sequence of calls to be for the same method
     # ( with the exception of edge blocks that aren't full size )
@@ -771,6 +771,7 @@ function block_kernel(::Type{T}, M, N, P, tA::Val{false}, tX::Val{false}, eq = :
     if Nblocks == 1
         if eq == :(=)
             for p = 1:Pblocks, m = 1:Mblocks, h = 1:2
+                skip_a_halfblock && p == Pblocks && h == 2 && continue
                 # dynamic dispatch to (Half)Block and (Half)BlockIndex...
                 # Should come up with a better way of doing this.
                 push!(qa, :(AX!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
@@ -779,6 +780,7 @@ function block_kernel(::Type{T}, M, N, P, tA::Val{false}, tX::Val{false}, eq = :
             end
         else #eq == :(+=) # assuming; anything else would have to be implemented
             for p = 1:Pblocks, m = 1:Mblocks, h = 1:2
+                skip_a_halfblock && p == Pblocks && h == 2 && continue
                 push!(qa, :(AX_plus_D!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
                                         D, $(BlockIndex(DT, HalfBlock(m,p,h))),
                                        A, $(BlockIndex(DA, Block(m,1))),
@@ -788,6 +790,7 @@ function block_kernel(::Type{T}, M, N, P, tA::Val{false}, tX::Val{false}, eq = :
     elseif Nblocks == 2
         if eq == :(=)
             for p = 1:Pblocks, m = 1:Mblocks, h = 1:2
+                skip_a_halfblock && p == Pblocks && h == 2 && continue
                 push!(qa, :(AX_plus_BY!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
                                 A, $(BlockIndex(DA, Block(m,1))),
                                 X, $(BlockIndex(DX, HalfBlock(1,p,h))),
@@ -796,8 +799,9 @@ function block_kernel(::Type{T}, M, N, P, tA::Val{false}, tX::Val{false}, eq = :
             end
         else #eq == :(+=) # assuming; anything else would have to be implemented
             for p = 1:Pblocks, m = 1:Mblocks, h = 1:2
+                skip_a_halfblock && p == Pblocks && h == 2 && continue
                 push!(qa, quote
-                            let
+                            let #Does this do anythign?
                                 AX_plus_BY_plus_D!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
                                     D, $(BlockIndex(DT, HalfBlock(m,p,h))),
                                     A, $(BlockIndex(DA, Block(m,1))),
@@ -811,6 +815,7 @@ function block_kernel(::Type{T}, M, N, P, tA::Val{false}, tX::Val{false}, eq = :
     else #Nblocks == 3
         if eq == :(=)
             for p = 1:Pblocks, m = 1:Mblocks, h = 1:2
+                skip_a_halfblock && p == Pblocks && h == 2 && continue
                 push!(qa, :(AX_plus_BY_plus_CZ!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
                                 A, $(BlockIndex(DA, Block(m,1))),
                                 X, $(BlockIndex(DX, HalfBlock(1,p,h))),
@@ -821,6 +826,7 @@ function block_kernel(::Type{T}, M, N, P, tA::Val{false}, tX::Val{false}, eq = :
             end
         else #eq == :(+=) # assuming; anything else would have to be implemented
             for p = 1:Pblocks, m = 1:Mblocks, h = 1:2
+                skip_a_halfblock && p == Pblocks && h == 2 && continue
                 push!(qa, quote
                                 let
                                     # AX_plus_BY_plus_CZ_plus_D!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
@@ -1001,14 +1007,6 @@ end
     end
 end
 
-"""
-By default, Julia refuses to emit SIMD instructions where aliasing is possible.
-However, the pointer matrices are only used internally where I can guarantee that they wont alias.
-
-Unlike C/C++, which have `restrict` compiler hints (or Fortran which simply assumes you aren't aliasing),
-there's no way for us to make that promise to the compiler. So, instead, the approach is to use `code_llvm`
-for the corresponding types where aliasing isn't possible, and then use this code with `llvmcall`.
-"""
 # @generated function mul!(C::RecursivePointerMatrixOrTranpose{T,M,P,LC},
 #                         A::RecursivePointerMatrixOrTranpose{T,M,N,LA},
 #                         B::RecursivePointerMatrixOrTranpose{T,N,P,LB},
@@ -1026,8 +1024,8 @@ for the corresponding types where aliasing isn't possible, and then use this cod
 @generated function gemm!(D::MutableRecursiveMatrix{T,M,P,LD},
                         A::MutableRecursiveMatrix{T,M,N,LA},
                         X::MutableRecursiveMatrix{T,N,P,LX}) where {T,M,N,P,LA,LX,LD}
-    maxdim = max(M,N,P) # two orders, so we can easily force generated function to rerun =P
-    # maxdim = max(M,P,N)
+    # maxdim = max(M,N,P) # two orders, so we can easily force generated function to rerun =P
+    maxdim = max(M,P,N)
     if maxdim <= cutoff # No recursion; we multiply.
         return mul_kernel(T,M,N,P, vistransposed(A), vistransposed(X), :(+=))
     elseif maxdim <= 3cutoff

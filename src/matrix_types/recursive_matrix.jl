@@ -212,20 +212,20 @@ end
     out
 end
 
-Base.getindex(A::RecursiveMatrixOrTranpose{T,M,N}, i::Int, j::Int) where {T,M,N} = A.data[dense_sub2ind((M,N),i,j)]
-# @generated function Base.getindex(A::RecursiveMatrixOrTranpose{T,M,N,L}, i::Int, j::Int) where {T,M,N,L}
-#     bounds_error_string = "($M, $N) array at index (\$i,\$j)."
-#     if istransposed(A)
-#         linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), j, i))
-#     else
-#         linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), i, j))
-#     end
-#     quote 
-#         # Base.@_inline_meta
-#         @boundscheck ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
-#         A.data[$linear_ind_expr]
-#     end
-# end
+# Base.getindex(A::RecursiveMatrixOrTranpose{T,M,N}, i::Int, j::Int) where {T,M,N} = A.data[dense_sub2ind((M,N),i,j)]
+@generated function Base.getindex(A::RecursiveMatrixOrTranpose{T,M,N,L}, i::Int, j::Int) where {T,M,N,L}
+    bounds_error_string = "($M, $N) array at index (\$i,\$j)."
+    if istransposed(A)
+        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), j, i))
+    else
+        linear_ind_expr = :(dense_sub2ind(Val{$M}(), Val{$N}(), i, j))
+    end
+    quote 
+        # Base.@_inline_meta
+        @boundscheck ($M < i || $N < j) && throw(BoundsError($bounds_error_string))
+        A.data[$linear_ind_expr]
+    end
+end
 # function getindex_block_quote(::Type{T}, full_m_blocks, mdim, m_r, full_n_blocks, ndim, n_r, m, n) where T
 #     if m <= full_m_blocks && n <= full_n_blocks
 #         Lout = mdim*ndim
@@ -365,7 +365,7 @@ end
         end
         # unsafe_store!(point(A), convert(T, val), sub2ind(istransposed(A), ($M,$N), i, j) )
 
-        unsafe_store!(point(A), val, $linear_ind_expr )
+        unsafe_store!(float_point(A), val, $linear_ind_expr )
     end
 end
 
@@ -446,35 +446,43 @@ end
 
 
 
-@generated function Base.getindex(A::MutableRecursiveMatrix{T}, i::BlockIndex{T,m,n,mn}) where {T,m,n,mn}
+@generated function Base.getindex(A::MutableRecursiveMatrix{T,M,N,L}, i::BlockIndex{T,m,n,mn}) where {T,M,N,L,m,n,mn}
+    # size_check sizeof(T)*(L-mn)
+    # SM = StaticRecursiveMatrix{T,m,n,mn}
     quote 
         Base.@_inline_meta
+        # @boundscheck i.i > $size_check && throw(BoundsError())
+        # Base.unsafe_load(convert_point(A, $SM ) + i.i)
+        @boundscheck i.i > $(sizeof(T)*(L-mn))  && throw(BoundsError())
         Base.unsafe_load(convert_point(A, StaticRecursiveMatrix{$T,$m,$n,$mn} ) + i.i)
     end
 end
-function Base.getindex(A::MutableRecursiveMatrix{T,M,N,L}, i::BlockIndex{T,cutoff,cutoff,cutoff2}) where {T,M,N,L}
-    Base.@_inline_meta
-    Base.unsafe_load(convert_point(A) + i.i)
-end
+# function Base.getindex(A::MutableRecursiveMatrix{T,M,N,L}, i::BlockIndex{T,cutoff,cutoff,cutoff2}) where {T,M,N,L}
+#     Base.@_inline_meta
+#     @boundscheck (i.i ÷ sizeof(T)) + mn > L  && throw(BoundsError())
+#     Base.unsafe_load(convert_point(A) + i.i)
+# end
 
 """
 The setindex methods don't work too well...
 """
-@generated function Base.setindex!(A::MutableRecursiveMatrix{T},
+@generated function Base.setindex!(A::MutableRecursiveMatrix{T,M,N,L},
                                     val::StaticRecursiveMatrix{T,m,n,mn},
-                                    i::BlockIndex{T,m,n,mn}) where {T,m,n,mn}
+                                    i::BlockIndex{T,m,n,mn}) where {T,M,N,L,m,n,mn}
     quote
         Base.@_inline_meta
+        @boundscheck i.i > $(sizeof(T)*(L-mn))  && throw(BoundsError())
         Base.unsafe_store!(convert_point(A, StaticRecursiveMatrix{$T,$m,$n,$mn} ) + i.i, val); nothing
     end
 end
 
-function Base.setindex!(A::MutableRecursiveMatrix{T,M,N,L},
-                                    val::StaticRecursiveMatrix{T,cutoff,cutoff,cutoff2},
-                                    i::BlockIndex{T,cutoff,cutoff,cutoff2}) where {T,M,N,L}
-    Base.@_inline_meta
-    Base.unsafe_store!(convert_point(A) + i.i, val); nothing
-end
+# function Base.setindex!(A::MutableRecursiveMatrix{T,M,N,L},
+#                                     val::StaticRecursiveMatrix{T,cutoff,cutoff,cutoff2},
+#                                     i::BlockIndex{T,cutoff,cutoff,cutoff2}) where {T,M,N,L}
+#     Base.@_inline_meta
+#     @boundscheck (i.i ÷ sizeof(T)) + mn > L  && throw(BoundsError())
+#     Base.unsafe_store!(convert_point(A) + i.i, val); nothing
+# end
 
 @generated function point(A::MutableRecursiveMatrix{T}, i::BlockIndex{T,m,n,mn}) where {T,m,n,mn}
     :(convert_point(A, StaticRecursiveMatrix{$T,$m,$n,$mn} ) + i.i)

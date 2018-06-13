@@ -171,10 +171,10 @@ The approach for sub2ind here incurs branches, which would disable SIMD.
 Therefore, Cartesian indexing is strongly discouraged for hot loops.
 Still, it is reasonably fast -- only a handful of ns.
 """
-# @generated dense_sub2ind(::Val{M}, ::Val{N}, i, j) where {N,M} = dense_sub2ind_quote(M, N)
-@generated function dense_sub2ind(::Val{M}, ::Val{N}, i, j) where {N,M}
-    dense_sub2ind_quote(M, N)
-end
+@generated dense_sub2ind(::Val{M}, ::Val{N}, i, j) where {N,M} = dense_sub2ind_quote(M, N)
+# @generated function dense_sub2ind(::Val{M}, ::Val{N}, i, j) where {N,M}
+#     dense_sub2ind_quote(M, N)
+# end
 
 
 
