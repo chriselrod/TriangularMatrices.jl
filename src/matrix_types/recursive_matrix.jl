@@ -457,11 +457,10 @@ end
         Base.unsafe_load(convert_point(A, StaticRecursiveMatrix{$T,$m,$n,$mn} ) + i.i)
     end
 end
-# function Base.getindex(A::MutableRecursiveMatrix{T,M,N,L}, i::BlockIndex{T,cutoff,cutoff,cutoff2}) where {T,M,N,L}
-#     Base.@_inline_meta
-#     @boundscheck (i.i ÷ sizeof(T)) + mn > L  && throw(BoundsError())
-#     Base.unsafe_load(convert_point(A) + i.i)
-# end
+@inline function Base.getindex(A::MutableRecursiveMatrix{T,M,N,L}, i::BlockIndex{T,cutoff,cutoff,cutoff2}) where {T,M,N,L}
+    @boundscheck i.i > (L-cutoff2)*sizeof(T) && throw(BoundsError())
+    Base.unsafe_load(convert_point(A) + i.i)
+end
 
 """
 The setindex methods don't work too well...
@@ -476,13 +475,12 @@ The setindex methods don't work too well...
     end
 end
 
-# function Base.setindex!(A::MutableRecursiveMatrix{T,M,N,L},
-#                                     val::StaticRecursiveMatrix{T,cutoff,cutoff,cutoff2},
-#                                     i::BlockIndex{T,cutoff,cutoff,cutoff2}) where {T,M,N,L}
-#     Base.@_inline_meta
-#     @boundscheck (i.i ÷ sizeof(T)) + mn > L  && throw(BoundsError())
-#     Base.unsafe_store!(convert_point(A) + i.i, val); nothing
-# end
+@inline function Base.setindex!(A::MutableRecursiveMatrix{T,M,N,L},
+                                    val::StaticRecursiveMatrix{T,cutoff,cutoff,cutoff2},
+                                    i::BlockIndex{T,cutoff,cutoff,cutoff2}) where {T,M,N,L}
+    @boundscheck i.i > (L-cutoff2)*sizeof(T) && throw(BoundsError())
+    Base.unsafe_store!(convert_point(A) + i.i, val); nothing
+end
 
 @generated function point(A::MutableRecursiveMatrix{T}, i::BlockIndex{T,m,n,mn}) where {T,m,n,mn}
     :(convert_point(A, StaticRecursiveMatrix{$T,$m,$n,$mn} ) + i.i)
