@@ -28,16 +28,16 @@ For `gemm` type operations `D = A*X`, it is optimized fairly well for `A` having
 ```julia
 using TriangularMatrices, BenchmarkTools
 a8 = randmat(8);
-x8 = randmat(8);
-d8 = randmat(8);
+x8_4 = randmat(8,4);
+d8_4 = randmat(8,4);
 
-TriangularMatrices.mul!(c8, a8, b8)
+TriangularMatrices.mul!(d8_4, a8, x8_4)
 
 using BenchmarkTools
-@benchmark TriangularMatrices.mul!($c8, $a8, $b8)
+@benchmark TriangularMatrices.mul!($d8_4, $a8, $x8_4)
 
-@code_llvm TriangularMatrices.mul!(c8, a8, b8)
-@code_native TriangularMatrices.mul!(c8, a8, b8)
+@code_llvm TriangularMatrices.mul!(d8_4, a8, x8_4)
+@code_native TriangularMatrices.mul!(d8_4, a8, x8_4)
 ```
 
 The underlying data layout is recursive. You can visualize this via:

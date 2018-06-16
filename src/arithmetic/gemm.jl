@@ -1,3 +1,19 @@
+# credit to foobar_lv2
+if VERSION < v"0.7-"
+    @inline function prefetch(address)
+        Base.llvmcall(("declare void @llvm.prefetch(i8* , i32 , i32 , i32 )",
+      "call void @llvm.prefetch(i8 * %0, i32 0, i32 0, i32 1)
+      ret void"), Cvoid, Tuple{Ptr{Int8}}, convert(Ptr{Int8},address)) 
+     end
+else
+    @inline function prefetch(address)
+        llvmcall(("declare void @llvm.prefetch(i8* , i32 , i32 , i32 )",
+        """%addr = inttoptr i64 %0 to i8*
+        call void @llvm.prefetch(i8* %addr, i32 0, i32 0, i32 1)
+        ret void"""), Cvoid, Tuple{Ptr{Cvoid}}, address) 
+    end
+end
+
 
 """
 A: M x N
@@ -894,27 +910,41 @@ function recursion_mul(::Type{T}, M, N, P, tA::Val{false}=Val(false), tX::Val{fa
             ptr_d11 = PointerRecursiveMatrix{$T,$M1,$P1,$(M1*P1)}(pd)
             ptr_a11 = PointerRecursiveMatrix{$T,$M1,$N1,$(M1*N1)}(pa)
             ptr_x11 = PointerRecursiveMatrix{$T,$N1,$P1,$(N1*P1)}(px)
+            prefetch(pa + $(s*M *N1))           # prefetch a12
+            prefetch(px + $(s*N1*P1))           # prefetch x21
             $(mul)( ptr_d11, ptr_a11, ptr_x11 )
             ptr_a12 = PointerRecursiveMatrix{$T,$M1,$N2,$(M1*N2)}(pa + $(s*M *N1))
             ptr_x21 = PointerRecursiveMatrix{$T,$N2,$P1,$(N2*P1)}(px + $(s*N1*P1))
+            prefetch(pa + $(s*M1*N1))           # prefetch a21
+            prefetch(px)                        # prefetch x11
             gemm!( ptr_d11, ptr_a12, ptr_x21 )
 
             ptr_d21 = PointerRecursiveMatrix{$T,$M2,$P1,$(M2*P1)}(pd + $(s*M1*P1))
             ptr_a21 = PointerRecursiveMatrix{$T,$M2,$N1,$(M2*N1)}(pa + $(s*M1*N1))
+            prefetch(pa + $(s*(M *N1 + M1*N2))) # prefetch a22
+            prefetch(px + $(s*N1*P1))           # prefetch x21
             $(mul)( ptr_d21, ptr_a21, ptr_x11 )
             ptr_a22 = PointerRecursiveMatrix{$T,$M2,$N2,$(M2*N2)}(pa + $(s*(M *N1 + M1*N2)))
+            prefetch(pa)                        # prefetch a11
+            prefetch(px + $(s*N*P1))            # prefetch x12
             gemm!( ptr_d21, ptr_a22, ptr_x21 )
 
 
             ptr_d12 = PointerRecursiveMatrix{$T,$M1,$P2,$(M1*P2)}(pd + $(s*M*P1))
             ptr_x12 = PointerRecursiveMatrix{$T,$N1,$P2,$(N1*P2)}(px + $(s*N*P1))
+            prefetch(pa + $(s*M *N1))           # prefetch a12
+            prefetch(px + $(s*(N*P1+N1*P2)))    # prefetch x22
             $(mul)( ptr_d12, ptr_a11, ptr_x12 )
             ptr_x22 = PointerRecursiveMatrix{$T,$N2,$P2,$(N2*P2)}(px + $(s*(N*P1+N1*P2)))
+            prefetch(pa + $(s*M1*N1))           # prefetch a21
+            prefetch(px + $(s*N*P1))            # prefetch x12
             gemm!( ptr_d12, ptr_a12, ptr_x22 )
 
 
 
             ptr_d22 = PointerRecursiveMatrix{$T,$M2,$P2,$(M2*P2)}(pd + $(s*(M*P1 + M1*P2)))
+            prefetch(pa + $(s*(M *N1 + M1*N2))) # prefetch a22
+            prefetch(px + $(s*(N*P1+N1*P2)))    # prefetch x22
             $(mul)( ptr_d22, ptr_a21, ptr_x12 )
             gemm!( ptr_d22, ptr_a22, ptr_x22 )
             nothing
