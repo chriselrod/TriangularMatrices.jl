@@ -55,5 +55,6 @@ include("decomp_and_inversions/cholesky.jl")
 include("decomp_and_inversions/inverse.jl")
 include("arithmetic/arithmetic.jl")
 include("arithmetic/gemm.jl")
+include("arithmetic/symv.jl")
 
 end # module

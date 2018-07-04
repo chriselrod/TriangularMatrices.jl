@@ -29,6 +29,12 @@ Base.similar(::RecursiveVector{T,L}) where {T,L} = RecursiveVector{T,L}()
     @boundscheck i > L && throw(BoundsError())
     x.data[i]
 end
+function Base.getindex(x::SIMDVector2{N,T}, i, ::Val{R}) where {N,R,T}
+    @boundscheck i > N && throw(BoundsError())
+    # ntuple(j -> x.data[i+j-1].value, Val(R))
+    RT = Ptr{StaticSIMD{R,T}}
+    Base.unsafe_load(Base.unsafe_convert(RT, pointer_from_objref(x)), i)
+end
 @inline function Base.setindex!(x::RecursiveVector{T,L}, val, i::Int) where {T,L}
     @boundscheck i > L && throw(BoundsError())    
     unsafe_store!(float_point(x), convert(T, val), i )
@@ -50,9 +56,78 @@ function LinearAlgebra.scale!(x::RecursiveVector{T,L}, α) where {T,L}
     x
 end
 
-function LinearAlgebra.vecdot(x::RecursiveVector{T,L}, y::RecursiveVector{T,L}) where {T,L}
+Base.vec(x::RecursiveVector) = x
+
+struct StaticSIMD{N,T} <: AbstractVector{T}
+    data::NTuple{N,Core.VecElement{T}}
+end
+Base.size(::StaticSIMD{N}) where N = (N,)
+Base.length(::StaticSIMD{N}) where N = N
+function Base.getindex(x::StaticSIMD{N}, i::Int) where N
+    @boundscheck i > N && throw(BoundsError())
+    x.data[i].value
+end
+@generated function Base.:*(x::StaticSIMD{N,T}, y::StaticSIMD{N,T}) where {N,T}
+    quote
+        Base.@_inline_meta
+        StaticSIMD{$N,$T}( $(Expr(:tuple, [:(x.data[$i].value * y.data[$i].value) for i ∈ 1:N]...)) )
+    end
+end
+@generated function Base.:+(x::StaticSIMD{N,T}, y::StaticSIMD{N,T}) where {N,T}
+    quote
+        Base.@_inline_meta
+        StaticSIMD{$N,$T}( $(Expr(:tuple, [:(x.data[$i].value + y.data[$i].value) for i ∈ 1:N]...)) )
+    end
+end
+@generated function Base.fma(x::StaticSIMD{N,T}, y::StaticSIMD{N,T}, z::StaticSIMD{N,T}) where {N,T}
+    quote
+        Base.@_inline_meta
+        StaticSIMD{$N,$T}( $(Expr(:tuple, [:(x.data[$i].value * y.data[$i].value + z.data[$i].value) for i ∈ 1:N]...)) )
+    end
+end
+@generated function Base.sum(x::StaticSIMD{N,T}) where {N,T}
+    quote
+        Base.@_inline_meta
+        $(Expr(:call, :+, [:(x.data[$i].value) for i ∈ 1:N]...))
+    end
+end
+@generated function LinearAlgebra.dot(x::RecursiveVector{T,L}, y::RecursiveVector{T,L}) where {T,L}
+    vec_length = 8
+    VVal = Val(vec_length)
+    Lo4, r = divrem(L, vec_length)
+    quote
+        # @inbounds out_tup = x[1:4] .* y[1:4]
+        @inbounds out_tup = x[1, $VVal] * y[1, $VVal]
+        @fastmath for i ∈ 2:$Lo4
+            @inbounds out_tup = fma(x[i, $VVal], y[i, $VVal], out_tup)
+        end
+        out = sum(out_tup)
+        @inbounds for i ∈ $(L-r+1):$L
+            out += x[i] * y[i]
+        end
+        out
+    end
+end
 
 
+@generated function abs2norm(x::RecursiveVector{T,L}) where {T,L}
+    vec_length = 8
+    VVal = Val(vec_length)
+    Lo4, r = divrem(L, vec_length)
+    quote
+        # @inbounds out_tup = x[1:4] .* y[1:4]
+        simdv = x[1, $VVal]
+        @inbounds out_tup = simdv * simdv
+        @fastmath for i ∈ 2:$Lo4
+            simdv = x[i, $VVal]
+            @inbounds out_tup = fma(simdv, simdv, out_tup)
+        end
+        out = sum(out_tup)
+        @inbounds for i ∈ $(L-r+1):$L
+            out += abs2(x[i])
+        end
+        out
+    end
 end
 
 

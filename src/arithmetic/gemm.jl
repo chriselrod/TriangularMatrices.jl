@@ -1056,7 +1056,7 @@ The dummy argument always gets optimized out.
 However, when using code_llvm on the function and filling it with a real type (eg, Bool), it causes the SSA names to get incremented by 1 (they start as %0 for the first argument, %1 for the second...). In llvmcall, these values get incremented by one between the first in the body and the argument list, while they do not in the function code returned by llvmcall.
 Maybe there is a solution that is less of a hack, but just passing an extra dummy argument to the code_llvm call to get them to line up was a simple solution.
 """
-@generated function mul!(D::MutableRecursiveMatrix{T,M,P,LD},
+@generated function LinearAlgebra.mul!(D::MutableRecursiveMatrix{T,M,P,LD},
                         A::MutableRecursiveMatrix{T,M,N,LA},
                         X::MutableRecursiveMatrix{T,N,P,LX}) where {T,M,N,P,LA,LX,LD}
                         #dummy = Nothing) where {T,M,N,P,LA,LB,LC}
