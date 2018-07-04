@@ -25,6 +25,7 @@
             push!(qa, :( $dnr += S[ $(small_triangle(c)+r) ] * x[$c] ) )
         end
     end
+    insert_linear!(qa, N, :d)
     push!(q.args, :(d))
     q
 end

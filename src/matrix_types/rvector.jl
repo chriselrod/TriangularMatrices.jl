@@ -37,8 +37,8 @@ Base.similar(::RecursiveVector{T,L}) where {T,L} = RecursiveVector{T,L}()
     @boundscheck i > L && throw(BoundsError())
     x.data[i]
 end
-function Base.getindex(x::RecursiveVector{N,T}, i, ::Val{R}) where {N,R,T}
-    @boundscheck i > N && throw(BoundsError())
+function Base.getindex(x::RecursiveVector{T,L}, i, ::Val{R}) where {T,L,R}
+    @boundscheck i > L && throw(BoundsError())
     # ntuple(j -> x.data[i+j-1].value, Val(R))
     RT = Ptr{StaticSIMD{R,T}}
     Base.unsafe_load(Base.unsafe_convert(RT, pointer_from_objref(x)), i)
@@ -57,7 +57,7 @@ function Base.copyto!(x::RecursiveVector{T,L}, y::RecursiveVector{T,L}) where {T
 end
 Base.copy(x::RecursiveVector{T,L}) where {T,L} = copyto!(RecursiveVector{T,L}(), x)
 
-function LinearAlgebra.scale!(x::RecursiveVector{T,L}, α) where {T,L}
+function LinearAlgebra.scale!(x::RecursiveVector{T,L}, α::Number) where {T,L}
     @inbounds @simd for l ∈ 1:L
         x[l] *= α
     end
@@ -103,18 +103,31 @@ end
     vec_length = 8
     VVal = Val(vec_length)
     Lo4, r = divrem(L, vec_length)
-    quote
-        # @inbounds out_tup = x[1:4] .* y[1:4]
-        @inbounds out_tup = x[1, $VVal] * y[1, $VVal]
-        @fastmath for i ∈ 2:$Lo4
-            @inbounds out_tup = fma(x[i, $VVal], y[i, $VVal], out_tup)
+    if L >= vec_length
+        q = quote
+            # @inbounds out_tup = x[1:4] .* y[1:4]
+            @inbounds out_tup = x[1, $VVal] * y[1, $VVal]
+            @fastmath for i ∈ 2:$Lo4
+                @inbounds out_tup = fma(x[i, $VVal], y[i, $VVal], out_tup)
+            end
+            out = sum(out_tup)
+            @inbounds for i ∈ $(L-r+1):$L
+                out += x[i] * y[i]
+            end
+            out
         end
-        out = sum(out_tup)
-        @inbounds for i ∈ $(L-r+1):$L
-            out += x[i] * y[i]
+    elseif L > 0
+        q =  quote
+            @inbounds out = x[1] * y[1]
+            @inbounds for i ∈ 2:$L
+                out += x[i] * y[i]
+            end
+            out
         end
-        out
+    else
+        q = :(NaN)
     end
+    q
 end
 
 
