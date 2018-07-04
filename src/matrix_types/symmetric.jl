@@ -150,7 +150,7 @@ end
 
 @inline function Base.setindex!(A::MutableSymmetricMatrix{T,N,L}, val, i::Integer) where  {T,N,L}
     @boundscheck begin
-        i > N && throw(BoundsError())
+        i > L && throw(BoundsError())
     end
     unsafe_store!(point(A), convert(T, val), i)
     return val
