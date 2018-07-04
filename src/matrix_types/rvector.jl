@@ -29,7 +29,7 @@ Base.similar(::RecursiveVector{T,L}) where {T,L} = RecursiveVector{T,L}()
     @boundscheck i > L && throw(BoundsError())
     x.data[i]
 end
-function Base.getindex(x::SIMDVector2{N,T}, i, ::Val{R}) where {N,R,T}
+function Base.getindex(x::RecursiveVector{N,T}, i, ::Val{R}) where {N,R,T}
     @boundscheck i > N && throw(BoundsError())
     # ntuple(j -> x.data[i+j-1].value, Val(R))
     RT = Ptr{StaticSIMD{R,T}}
