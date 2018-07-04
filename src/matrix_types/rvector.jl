@@ -117,13 +117,12 @@ end
             out
         end
     elseif L > 0
-        q =  quote
-            @inbounds out = x[1] * y[1]
-            @inbounds for i ∈ 2:$L
-                out += x[i] * y[i]
-            end
-            out
+        q, qa = create_quote()
+        push!(qa, :(out = x[1] * y[1]))
+        for i ∈ 2:L
+            push!(qa, :(out += x[$i] * y[$i]))
         end
+        push!(q.args, :(out))
     else
         q = :(NaN)
     end
