@@ -21,7 +21,9 @@ mutable struct RecursiveMatrix{T,M,N,L} <: MutableRecursiveMatrix{T,M,N,L}
     data::NTuple{L,T}
     RecursiveMatrix{T,M,N,L}(data::NTuple{L,T}) where {T,M,N,L} = new(data)
     RecursiveMatrix{T,M,N,L}() where {T,M,N,L} = new()
+    @generated RecursiveMatrix{T,M,N}() where {T,M,N} = :(RecursiveMatrix{$T,$M,$N,$(M*N)}())
 end
+
 
 function RecursiveMatrix(data::NTuple{L,T}, ::Val{M}, ::Val{N}) where {M,N,L,T}
     RecursiveMatrix{T,M,N,L}(data)

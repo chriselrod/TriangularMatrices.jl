@@ -11,22 +11,23 @@ const Sized{N,T} = Union{SVector{N,T}, NTuple{N,T}}
 import LinearAlgebra: Adjoint
 
 export  SymmetricMatrix,
-        SymmetricMMatrix,
+        StaticSymmetricMatrix,
         LowerTriangularMatrix,
-        LowerTriangularMMatrix,
+        StaticLowerTriangularMatrix,
         UpperTriangularMatrix,
-        UpperTriangularMMatrix,
+        StaticUpperTriangularMatrix,
         RecursiveMatrix,
         StaticRecursiveMatrix,
-        cholesky,
+        # cholesky,
         cholesky!,
         reverse_cholesky,
         reverse_cholesky!,
         xxt,
         xtx,
-        inv!,
+        # inv!,
         randmat,
-        srandmat
+        srandmat,
+        RecursiveVector
 
 
 
@@ -50,6 +51,7 @@ include("recursive_indexing.jl")
 include("matrix_types/triangular.jl")
 include("matrix_types/symmetric.jl")
 include("matrix_types/recursive_matrix.jl")
+include("matrix_types/rvector.jl")
 include("decomp_and_inversions/cholesky.jl")
 include("decomp_and_inversions/inverse.jl")
 include("arithmetic/arithmetic.jl")

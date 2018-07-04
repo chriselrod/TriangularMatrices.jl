@@ -1,20 +1,24 @@
-abstract type AbstractSymmetricMatrix{T,N,N2} <: AbstractMatrix{T} end
-abstract type MutableSymmetricMatrix{T,N,N2} <: AbstractSymmetricMatrix{T,N,N2} end
+abstract type AbstractSymmetricMatrix{T,N,L} <: AbstractMatrix{T} end
+abstract type MutableSymmetricMatrix{T,N,L} <: AbstractSymmetricMatrix{T,N,L} end
 
 """
 Actually Hermitian, because adjoint returns itself.
 """
-struct StaticSymmetricMatrix{T,N,N2} <: AbstractSymmetricMatrix{T,N,N2}
-    data::NTuple{N2,T}
+struct StaticSymmetricMatrix{T,N,L} <: AbstractSymmetricMatrix{T,N,L}
+    data::NTuple{L,T}
 end
-mutable struct SymmetricMatrix{T,N,N2} <: MutableSymmetricMatrix{T,N,N2}
-    data::NTuple{N2,T}
-    function SymmetricMatrix{T, N, N2}(d::NTuple{N2,T}) where {T,N,N2}
+mutable struct SymmetricMatrix{T,N,L} <: MutableSymmetricMatrix{T,N,L}
+    data::NTuple{L,T}
+    @generated function SymmetricMatrix{T,N}() where {T,N}
         isbits(T) || error("Can only construct mutable isbits matrices.")
-        new{T,N,N2}(d)
+        :(new{$T,$N,$(N*N)}())
+    end
+    function SymmetricMatrix{T, N, L}(d::NTuple{L,T}) where {T,N,L}
+        isbits(T) || error("Can only construct mutable isbits matrices.")
+        new{T,N,L}(d)
     end
 end
-struct PointerSymmetricMatrix{T,N,N2} <: MutableSymmetricMatrix{T,N,N2}
+struct PointerSymmetricMatrix{T,N,L} <: MutableSymmetricMatrix{T,N,L}
     data::Ptr{T}
 end
 Base.size(::AbstractSymmetricMatrix{T,N}) where {T,N} = (N,N)
@@ -26,8 +30,8 @@ function StaticSymmetricMatrix(A::AbstractMatrix)
     StaticSymmetricMatrix(A, Val(n))
 end
 @generated function StaticSymmetricMatrix(A::AbstractMatrix{T}, ::Val{N}) where {T,N}
-    q, N2 = upper_triangle_quote(N, T)
-    push!(q.args, :(StaticSymmetricMatrix{$T,$N,$N2}( @ntuple $N2 A )))
+    q, L = upper_triangle_quote(N, T)
+    push!(q.args, :(StaticSymmetricMatrix{$T,$N,$L}( @ntuple $L A )))
     q
 end
 function SymmetricMatrix(A::AbstractMatrix)
@@ -36,26 +40,26 @@ function SymmetricMatrix(A::AbstractMatrix)
     SymmetricMatrix(A, Val(n))
 end
 @generated function SymmetricMatrix(A::AbstractMatrix{T}, ::Val{N}) where {T,N}
-    q, N2 = upper_triangle_quote(N, T)
-    push!(q.args, :(SymmetricMatrix{$T,$N,$N2}( data )))
+    q, L = upper_triangle_quote(N, T)
+    push!(q.args, :(SymmetricMatrix{$T,$N,$L}( data )))
     q
 end
 function StaticSymmetricMatrix(data::AbstractVector)
-    N2 = length(data)
-    N = inv_triangle(N2)
-    StaticSymmetricMatrix(data, Val(N), Val(N2))
+    L = length(data)
+    N = inv_triangle(L)
+    StaticSymmetricMatrix(data, Val(N), Val(L))
 end
-function StaticSymmetricMatrix(data::AbstractVector{T}, ::Val{N}, ::Val{N2}) where {T,N,N2}
-    StaticSymmetricMatrix{T,N,N2}(ntuple(i -> data[i], N2))
+function StaticSymmetricMatrix(data::AbstractVector{T}, ::Val{N}, ::Val{L}) where {T,N,L}
+    StaticSymmetricMatrix{T,N,L}(ntuple(i -> data[i], L))
 end
-StaticSymmetricMatrix(data::NTuple{N2,T}) where {T,N2} = StaticSymmetricMatrix(data,ValI(Val{N2}()))
-SymmetricMatrix(data::NTuple{N2,T}) where {T,N2} = SymmetricMatrix(data,ValI(Val{N2}()))
-StaticSymmetricMatrix(data::SVector{N2,T}) where {T,N2} = StaticSymmetricMatrix(data.data,ValI(Val{N2}()))
-SymmetricMatrix(data::SVector{N2,T}) where {T,N2} = SymmetricMatrix(data.data,ValI(Val{N2}()))
-StaticSymmetricMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = StaticSymmetricMatrix{T,N,N2}(data)
-SymmetricMatrix(data::NTuple{N2,T}, ::Val{N}) where {T,N,N2} = SymmetricMatrix{T,N,N2}(data)
-StaticSymmetricMatrix(data::SymmetricMatrix{T,N,N2}) where {T,N,N2} = StaticSymmetricMatrix{T,N,N2}(data.data)
-SymmetricMatrix(data::StaticSymmetricMatrix{T,N,N2}) where {T,N,N2} = SymmetricMatrix{T,N,N2}(data.data)
+StaticSymmetricMatrix(data::NTuple{L,T}) where {T,L} = StaticSymmetricMatrix(data,ValI(Val{L}()))
+SymmetricMatrix(data::NTuple{L,T}) where {T,L} = SymmetricMatrix(data,ValI(Val{L}()))
+StaticSymmetricMatrix(data::SVector{L,T}) where {T,L} = StaticSymmetricMatrix(data.data,ValI(Val{L}()))
+SymmetricMatrix(data::SVector{L,T}) where {T,L} = SymmetricMatrix(data.data,ValI(Val{L}()))
+StaticSymmetricMatrix(data::NTuple{L,T}, ::Val{N}) where {T,N,L} = StaticSymmetricMatrix{T,N,L}(data)
+SymmetricMatrix(data::NTuple{L,T}, ::Val{N}) where {T,N,L} = SymmetricMatrix{T,N,L}(data)
+StaticSymmetricMatrix(data::SymmetricMatrix{T,N,L}) where {T,N,L} = StaticSymmetricMatrix{T,N,L}(data.data)
+SymmetricMatrix(data::StaticSymmetricMatrix{T,N,L}) where {T,N,L} = SymmetricMatrix{T,N,L}(data.data)
 
 point(A::MutableSymmetricMatrix{T}) where T = Base.unsafe_convert(Ptr{T}, pointer_from_objref(A))
 point(A::PointerSymmetricMatrix) = A.data
@@ -64,7 +68,7 @@ point(A::PointerSymmetricMatrix) = A.data
 @inline Base.getindex(A::StaticSymmetricMatrix, i::Integer) = A.data[i]
 @inline Base.getindex(A::SymmetricMatrix, i::Integer) = A.data[i]
 @inline Base.getindex(A::PointerSymmetricMatrix, i::Integer) = unsafe_load(A.data, i)
-@inline function Base.getindex(A::StaticSymmetricMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
+@inline function Base.getindex(A::StaticSymmetricMatrix{T,N,L}, i::Integer, j::Integer) where {T,N,L}
     @boundscheck begin
         max(i,j) > N && throw("BoundsError: index ($i, $j) is out of bounds.")
     end
@@ -73,7 +77,7 @@ point(A::PointerSymmetricMatrix) = A.data
     out
 end
 
-# @inline function Base.getindex(A::MutableSymmetricMatrix{T,N,N2}, i::Integer, j::Integer) where {T,N,N2}
+# @inline function Base.getindex(A::MutableSymmetricMatrix{T,N,L}, i::Integer, j::Integer) where {T,N,L}
 #     @boundscheck begin
 #         if (max(i,j) > 2) || (min(i,j) < 1)
 #             throw(BoundsError("When recursing only indicies of 1 and 2 are supported. Received $i,$j.")) 
@@ -85,11 +89,11 @@ end
 
 
 # for N ∈ 1:cutoff
-#     N2 = big_triangle(N)
+#     L = big_triangle(N)
 
-#     @eval Base.size(A::MutableSymmetricMatrix{T,$N,$N2}) = ($N,$N)
+#     @eval Base.size(A::MutableSymmetricMatrix{T,$N,$L}) = ($N,$N)
 
-#     @eval @inline function Base.getindex(A::MutableSymmetricMatrix{T,$N,$N2}, i::Integer, j::Integer) where {T,$N,$N2}
+#     @eval @inline function Base.getindex(A::MutableSymmetricMatrix{T,$N,$L}, i::Integer, j::Integer) where {T,$N,$L}
 #         @boundscheck begin
 #             max(i,j) > $N && throw("BoundsError: index ($i, $j) is out of bounds.")
 #         end
@@ -135,22 +139,22 @@ end
     pointer_offset = big_triangle(Nhalf) * sizeof(T)
     :(PointerMatrix{$T,$Nhalf,$Nremain,$L}(point(A) + $pointer_offset ))
 end
-@generated function Base.getindex(A::MutableSymmetricMatrix{T,N,N2}, ::Val{2}, ::Val{2}) where {T, N, N2}
+@generated function Base.getindex(A::MutableSymmetricMatrix{T,N,L}, ::Val{2}, ::Val{2}) where {T, N, L}
     Nremain = N ÷ 2
     triangle_size = big_triangle(Nremain)
-    pointer_offset = (N2 - triangle_size) * sizeof(T)
+    pointer_offset = (L - triangle_size) * sizeof(T)
     :(PointerSymmetricMatrix{$T,$Nremain,$triangle_size}(point(A) + $pointer_offset ))
 end
 
 
-@inline function Base.setindex!(A::MutableSymmetricMatrix{T,N,N2}, val, i::Integer) where  {T,N,N2}
+@inline function Base.setindex!(A::MutableSymmetricMatrix{T,N,L}, val, i::Integer) where  {T,N,L}
     @boundscheck begin
         i > N && throw(BoundsError())
     end
     unsafe_store!(point(A), convert(T, val), i)
     return val
 end
-@inline function Base.setindex!(A::SymmetricMatrix{T,N,N2}, val, i::Integer, j::Integer) where  {T,N,N2}
+@inline function Base.setindex!(A::SymmetricMatrix{T,N,L}, val, i::Integer, j::Integer) where  {T,N,L}
     @boundscheck begin
         max(i,j) > N && throw(BoundsError())
     end

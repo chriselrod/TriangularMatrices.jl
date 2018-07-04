@@ -1,19 +1,28 @@
+import Base: llvmcall
 # credit to foobar_lv2
 if VERSION < v"0.7-"
-    @inline function prefetch(address)
-        Base.llvmcall(("declare void @llvm.prefetch(i8* , i32 , i32 , i32 )",
-      "call void @llvm.prefetch(i8 * %0, i32 0, i32 0, i32 1)
-      ret void"), Cvoid, Tuple{Ptr{Int8}}, convert(Ptr{Int8},address)) 
+    # @inline function prefetch(address, ::Any)
+    #     llvmcall(("declare void @llvm.prefetch(i8* , i32 , i32 , i32 )",
+    #   "call void @llvm.prefetch(i8 * %0, i32 0, i32 0, i32 1)
+    #   ret void"), Cvoid, Tuple{Ptr{Int8}}, convert(Ptr{Int8},address)) 
+    #  end
+     @inline function prefetch(address, ::Any)
+         nothing
      end
 else
-    @inline function prefetch(address)
-        llvmcall(("declare void @llvm.prefetch(i8* , i32 , i32 , i32 )",
-        """%addr = inttoptr i64 %0 to i8*
-        call void @llvm.prefetch(i8* %addr, i32 0, i32 0, i32 1)
-        ret void"""), Cvoid, Tuple{Ptr{Cvoid}}, address) 
+    # @inline function prefetch(address, ::Val{3})# args are address, read/write, locality, cache type
+    #     llvmcall(("declare void @llvm.prefetch(i8* , i32 , i32 , i32 )",
+    #     """%addr = inttoptr i64 %0 to i8*
+    #     call void @llvm.prefetch(i8* %addr, i32 0, i32 1, i32 1)
+    #     ret void"""), Cvoid, Tuple{Int}, address )
+    # end
+    @inline function prefetch(address, ::Any)
+        nothing
     end
+    # @inline function prefetch(address, locality::Cint) #noop.
+    #     nothing
+    # end
 end
-
 
 """
 A: M x N
@@ -24,10 +33,10 @@ C = A * B
 """
 function broadcast_mul_quote!(qa, ::Type{T}, M, N, P,
                 ta::Val{false}=Val(false), A = :A, tb::Val{false}=Val(false), B = :B, C = :C,
-                extract = extract_symbol, insert = extract_symbol, equalop = :(=) ) where T
+                extractA = extract_symbol, extractB = extract_symbol, insert = extract_symbol, equalop = :(=) ) where T
 
-    eA = (i,j) -> extract(A, sub2ind(false, (M, N), i, j))
-    eB = (i,j) -> extract(B, sub2ind(false, (N, P), i, j))
+    eA = (i,j) -> extractA(A, sub2ind(false, (M, N), i, j))
+    eB = (i,j) -> extractB(B, sub2ind(false, (N, P), i, j))
     eC = (i,j) -> insert(C, sub2ind(false, (M, P), i, j))
     chunk = max(1,32 ÷ sizeof(T))
     Num_chunks, Num_remaining = divrem(M, chunk)
@@ -37,32 +46,27 @@ function broadcast_mul_quote!(qa, ::Type{T}, M, N, P,
     # Prioritize that over memory access order?
     # This is a kernel for small-scale computations, so I think that makes sense.
 
-    
-    
-    # Handling chunked and non-chunked separately, in hopes of encouraging vectorization...
+    for m = 1:M
+        push!(qa, :($(Symbol(A, :t_, m))  = $(eA(m,1)) ))
+    end
     for p = 1:P
-        B_np = eB(1,p)
-        # for c = 0:Num_chunks-1
-        #     for m = (1:chunk) + c*chunk
-        #         push!(qa, Expr(equalop, eC(m, p), :( $B_np * $(eA(m,1)) ) ) )
-        #     end
-        # end
-        for m = 1:total_chunked
-            push!(qa, Expr( equalop, eC(m, p), :( $B_np * $(eA(m,1)) ) ) )
+        push!(qa, :($(Symbol(B, :t_, p))  = $(eB(1,p)) ))
+        for m = 1:M
+            push!(qa, Expr( equalop, eC(m, p), :( $(Symbol(B, :t_, p)) * $(Symbol(A, :t_, m)) ) ) )
         end
-        for n = 2:N
-            B_np = eB(n,p)
-            # for c = 0:Num_chunks-1
-            #     for m = (1:chunk) + c*chunk
-            #         push!(qa, Expr( :(+=), eC(m, p), :( $B_np * $(eA(m,n)) ) ) )
-            #     end
-            # end
-            for m = 1:total_chunked
-                push!(qa, Expr( :(+=), eC(m, p), :( $B_np * $(eA(m,n)) ) ) )
+    end
+    for n = 2:N
+        for m = 1:M
+            push!(qa, :($(Symbol(A, :t_, m))  = $(eA(m,n)) ))
+        end
+        for p = 1:P
+            push!(qa, :($(Symbol(B, :t_, p))  = $(eB(n,p)) ))
+            for m = 1:M
+                push!(qa, Expr( :(+=), eC(m, p), :( $(Symbol(B, :t_, p)) * $(Symbol(A, :t_, m)) ) ) )
             end
         end
     end
-
+    
     if Num_remaining > 0
         # Here, we follow a different pattern, trying to vectorize across N instead of across M
 
@@ -92,6 +96,7 @@ function broadcast_mul_quote!(qa, ::Type{T}, M, N, P,
         # end
     end
 end
+
 function broadcast_mul_lazyextract_quote!(qa, ::Type{T}, M, N, P,
                 ta::Val{false}=Val(false), A = :A, tb::Val{false}=Val(false), B = :B, C = :C,
                 extract = extract_symbol ) where T
@@ -297,11 +302,16 @@ end
     else
         insert!(q.args, 1, :(Base.@_inline_meta))
     end
-    extract_linear!(qa, LA, :A)
-    extract_linear!(qa, LX, :X)
-    extract_linear!(qa, LB, :B)
-    extract_linear!(qa, LY, :Y)
-    AX_plus_BY_quote!(qa, T, M, Nax, Nby, P, Val(false), :A, Val(false), :X, :B, :Y, :D, id_symbol, id_symbol, :(=) )
+    # extract_linear!(qa, LA, :A)
+    # extract_linear!(qa, LX, :X)
+    # extract_linear!(qa, LB, :B)
+    # extract_linear!(qa, LY, :Y)
+    # AX_plus_BY_quote!(qa, T, M, Nax, Nby, P, Val(false), :A, Val(false), :X, :B, :Y, :D, id_symbol, id_symbol, :(=) )
+
+
+    broadcast_mul_quote!(qa, T, M, Nax, P, Val(false), :A, Val(false), :X, :D, extract_symbol, extract_symbol, id_symbol, :(=) )
+    broadcast_mul_quote!(qa, T, M, Nby, P, Val(false), :B, Val(false), :Y, :D, extract_symbol, extract_symbol, id_symbol, :(+=) )
+
     # insert_linear!(qa, LD, :D)
     # push!(q.args, :D)
     LD = M*P
@@ -319,14 +329,20 @@ end
     else
         insert!(q.args, 1, :(Base.@_inline_meta))
     end
-    extract_linear!(qa, LA, :A)
-    extract_linear!(qa, LX, :X)
-    extract_linear!(qa, LB, :B)
-    extract_linear!(qa, LY, :Y)
-    extract_linear!(qa, LD, :D)
-    AX_plus_BY_quote!(qa, T, M, Nax, Nby, P, Val(false), :A, Val(false), :X, :B, :Y, :D, id_symbol, id_symbol, :(+=) )
+    # extract_linear!(qa, LA, :A)
+    # extract_linear!(qa, LX, :X)
+    # extract_linear!(qa, LB, :B)
+    # extract_linear!(qa, LY, :Y)
+    # extract_linear!(qa, LD, :D)
+    # AX_plus_BY_quote!(qa, T, M, Nax, Nby, P, Val(false), :A, Val(false), :X, :B, :Y, :D, id_symbol, id_symbol, :(+=) )
     # insert_linear!(qa, LD, :D)
     # push!(q.args, :D)
+
+
+
+    extract_linear!(qa, LD, :D)
+    broadcast_mul_quote!(qa, T, M, Nax, P, Val(false), :A, Val(false), :X, :D, extract_symbol, extract_symbol, id_symbol, :(+=) )
+    broadcast_mul_quote!(qa, T, M, Nby, P, Val(false), :B, Val(false), :Y, :D, extract_symbol, extract_symbol, id_symbol, :(+=) )
     
     push!(q.args, :( StaticRecursiveMatrix{$T,$M,$P,$LD}( Base.Cartesian.@ntuple $LD D ) ))
     q
@@ -368,16 +384,22 @@ end
     else
         insert!(q.args, 1, :(Base.@_inline_meta))
     end
-    extract_linear!(qa, LA, :A) # second arg is the name of the variable we're extracting.
-    extract_linear!(qa, LB, :A, :B, 0, LA)
-    extract_linear!(qa, LC, :A, :C, 0, LA + LB)
-    N = Nax + Nby + Ncz
-    for p = 1:P
-        extract_linear!(qa, Nax, :X, :X, (p-1)*Nax, (p-1)*N             )
-        extract_linear!(qa, Nby, :X, :Y, (p-1)*Nby, (p-1)*N + Nax       )
-        extract_linear!(qa, Ncz, :X, :Z, (p-1)*Ncz, (p-1)*N + Nax + Nby )
-    end
-    broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :X, :D, id_symbol, id_symbol, :(=) )
+    # extract_linear!(qa, LA, :A) # second arg is the name of the variable we're extracting.
+    # extract_linear!(qa, LB, :A, :B, 0, LA)
+    # extract_linear!(qa, LC, :A, :C, 0, LA + LB)
+    # N = Nax + Nby + Ncz
+    # for p = 1:P
+    #     extract_linear!(qa, Nax, :X, :X, (p-1)*Nax, (p-1)*N             )
+    #     extract_linear!(qa, Nby, :X, :Y, (p-1)*Nby, (p-1)*N + Nax       )
+    #     extract_linear!(qa, Ncz, :X, :Z, (p-1)*Ncz, (p-1)*N + Nax + Nby )
+    # end
+    # broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :X, :D, id_symbol, id_symbol, :(=) )
+
+
+
+    broadcast_mul_quote!(qa, T, M, Nax, P, Val(false), :A, Val(false), :X, :D, extract_symbol, extract_symbol, id_symbol, :(=) )
+    broadcast_mul_quote!(qa, T, M, Nby, P, Val(false), :B, Val(false), :Y, :D, extract_symbol, extract_symbol, id_symbol, :(+=) )
+    broadcast_mul_quote!(qa, T, M, Ncz, P, Val(false), :C, Val(false), :Z, :D, extract_symbol, extract_symbol, id_symbol, :(+=) )
     LD = M*P
     # insert_linear!(qa, LD, :D)
     
@@ -397,19 +419,25 @@ end
     else
         insert!(q.args, 1, :(Base.@_inline_meta))
     end
-    extract_linear!(qa, LA, :A) # second arg is the name of the variable we're extracting.
-    extract_linear!(qa, LB, :A, :B, 0, LA)
-    extract_linear!(qa, LC, :A, :C, 0, LA + LB)
-    N = Nax + Nby + Ncz
-    for p = 1:P
-        extract_linear!(qa, Nax, :X, :X, (p-1)*Nax, (p-1)*N             )
-        extract_linear!(qa, Nby, :X, :Y, (p-1)*Nby, (p-1)*N + Nax       )
-        extract_linear!(qa, Ncz, :X, :Z, (p-1)*Ncz, (p-1)*N + Nax + Nby )
-    end
-    extract_linear!(qa, LD, :D)
-    broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :X, :D, id_symbol, id_symbol, :(+=) )
+    # extract_linear!(qa, LA, :A) # second arg is the name of the variable we're extracting.
+    # extract_linear!(qa, LB, :A, :B, 0, LA)
+    # extract_linear!(qa, LC, :A, :C, 0, LA + LB)
+    # N = Nax + Nby + Ncz
+    # for p = 1:P
+    #     extract_linear!(qa, Nax, :X, :X, (p-1)*Nax, (p-1)*N             )
+    #     extract_linear!(qa, Nby, :X, :Y, (p-1)*Nby, (p-1)*N + Nax       )
+    #     extract_linear!(qa, Ncz, :X, :Z, (p-1)*Ncz, (p-1)*N + Nax + Nby )
+    # end
+    # extract_linear!(qa, LD, :D)
+    # broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :X, :D, id_symbol, id_symbol, :(+=) )
     # insert_linear!(qa, LD, :D)
     
+
+    extract_linear!(qa, LD, :D)
+    broadcast_mul_quote!(qa, T, M, Nax, P, Val(false), :A, Val(false), :X, :D, extract_symbol, extract_symbol, id_symbol, :(+=) )
+    broadcast_mul_quote!(qa, T, M, Nby, P, Val(false), :B, Val(false), :Y, :D, extract_symbol, extract_symbol, id_symbol, :(+=) )
+    broadcast_mul_quote!(qa, T, M, Ncz, P, Val(false), :C, Val(false), :Z, :D, extract_symbol, extract_symbol, id_symbol, :(+=) )
+
     # push!(q.args, :D)
     # q
     push!(q.args, :( StaticRecursiveMatrix{$T,$M,$P,$LD}( Base.Cartesian.@ntuple $LD D ) ))
@@ -444,7 +472,6 @@ end
     push!(q.args, :( StaticRecursiveMatrix{$T,$M,$P,$LD}( Base.Cartesian.@ntuple $LD D ) ))
     q
 end
-
 @generated function Base.:*(A::StaticRecursiveMatrix{T,M,N,LA}, X::StaticRecursiveMatrix{T,N,P,LX}) where {T,M,N,P,LA,LX}
     q, qa = create_quote()
     @static if VERSION > v"0.7-"
@@ -452,9 +479,11 @@ end
     else
         insert!(q.args, 1, :(Base.@_inline_meta))
     end
-    extract_linear!(qa, LA, :A)
-    extract_linear!(qa, LX, :X)
-    broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :X, :D, id_symbol, id_symbol, :(=) )
+    # println("Foo")
+    # extract_linear!(qa, LA, :A)
+    # extract_linear!(qa, LX, :X)
+    # broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :X, :D, extract_symbol, id_symbol, id_symbol, :(=) )
+    broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :X, :D, extract_symbol, extract_symbol, id_symbol, :(=) )
     # insert_linear!(qa, LC, :C)
     
     # push!(q.args, :C)
@@ -472,12 +501,15 @@ end
     else
         insert!(q.args, 1, :(Base.@_inline_meta))
     end
-    extract_linear!(qa, LA, :A)
-    extract_linear!(qa, LX, :X)
-    extract_linear!(qa, LD, :D)
-    broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :X, :D, id_symbol, id_symbol, :(+=) )
+    # extract_linear!(qa, LA, :A)
+    # extract_linear!(qa, LX, :X)
+    # extract_linear!(qa, LD, :D)
+    # broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :X, :D, id_symbol, id_symbol, :(+=) )
     # insert_linear!(qa, LC, :C)
     
+
+    extract_linear!(qa, LD, :D)
+    broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :X, :D, extract_symbol, extract_symbol, id_symbol, :(+=) )
     # push!(q.args, :C)
     # q
     # LD = M*P
@@ -824,6 +856,14 @@ function block_kernel(::Type{T}, M, N, P, tA::Val{false}, tX::Val{false}, eq = :
                                     X, $(BlockIndex(DX, HalfBlock(1,p,h))),
                                     A, $(BlockIndex(DA, Block(m,2))),
                                     X, $(BlockIndex(DX, HalfBlock(2,p,h))) )
+                                # AX_plus_D!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
+                                #     D, $(BlockIndex(DT, HalfBlock(m,p,h))),
+                                #     A, $(BlockIndex(DA, Block(m,1))),
+                                #     X, $(BlockIndex(DX, HalfBlock(1,p,h))) )
+                                # AX_plus_D!(point(D, $(BlockIndex(DT, HalfBlock(m,p,h)))),
+                                #     D, $(BlockIndex(DT, HalfBlock(m,p,h))),
+                                #     A, $(BlockIndex(DA, Block(m,2))),
+                                #     X, $(BlockIndex(DX, HalfBlock(2,p,h))) )
                             end
                         end)
             end
@@ -903,48 +943,53 @@ function recursion_mul(::Type{T}, M, N, P, tA::Val{false}=Val(false), tX::Val{fa
         P1, P2 = split_dim(P)
         s = sizeof(T)
 
+        fetch_locality = min(max(round(Cint, log2(cutoff) + 5) -
+                        round(Cint,log2(max(M,N,P)),RoundUp),Cint(0)),Cint(3))
+
         push!(qa, quote
             pd = convert_point(D)
             pa = convert_point(A)
             px = convert_point(X)
+            pav = Int(pa)
+            pxv = Int(px)
             ptr_d11 = PointerRecursiveMatrix{$T,$M1,$P1,$(M1*P1)}(pd)
             ptr_a11 = PointerRecursiveMatrix{$T,$M1,$N1,$(M1*N1)}(pa)
             ptr_x11 = PointerRecursiveMatrix{$T,$N1,$P1,$(N1*P1)}(px)
-            prefetch(pa + $(s*M *N1))           # prefetch a12
-            prefetch(px + $(s*N1*P1))           # prefetch x21
+            prefetch(pav + $(s*M *N1), Val{$fetch_locality}())           # prefetch a12
+            prefetch(pxv + $(s*N1*P1), Val{$fetch_locality}())           # prefetch x21
             $(mul)( ptr_d11, ptr_a11, ptr_x11 )
             ptr_a12 = PointerRecursiveMatrix{$T,$M1,$N2,$(M1*N2)}(pa + $(s*M *N1))
             ptr_x21 = PointerRecursiveMatrix{$T,$N2,$P1,$(N2*P1)}(px + $(s*N1*P1))
-            prefetch(pa + $(s*M1*N1))           # prefetch a21
-            prefetch(px)                        # prefetch x11
+            prefetch(pav + $(s*M1*N1), Val{$fetch_locality}())           # prefetch a21
+            prefetch(pxv, Val{$fetch_locality}())                        # prefetch x11
             gemm!( ptr_d11, ptr_a12, ptr_x21 )
 
             ptr_d21 = PointerRecursiveMatrix{$T,$M2,$P1,$(M2*P1)}(pd + $(s*M1*P1))
             ptr_a21 = PointerRecursiveMatrix{$T,$M2,$N1,$(M2*N1)}(pa + $(s*M1*N1))
-            prefetch(pa + $(s*(M *N1 + M1*N2))) # prefetch a22
-            prefetch(px + $(s*N1*P1))           # prefetch x21
+            prefetch(pav + $(s*(M *N1 + M1*N2)), Val{$fetch_locality}()) # prefetch a22
+            prefetch(pxv + $(s*N1*P1), Val{$fetch_locality}())           # prefetch x21
             $(mul)( ptr_d21, ptr_a21, ptr_x11 )
             ptr_a22 = PointerRecursiveMatrix{$T,$M2,$N2,$(M2*N2)}(pa + $(s*(M *N1 + M1*N2)))
-            prefetch(pa)                        # prefetch a11
-            prefetch(px + $(s*N*P1))            # prefetch x12
+            prefetch(pav, Val{$fetch_locality}())                        # prefetch a11
+            prefetch(pxv + $(s*N*P1), Val{$fetch_locality}())            # prefetch x12
             gemm!( ptr_d21, ptr_a22, ptr_x21 )
 
 
             ptr_d12 = PointerRecursiveMatrix{$T,$M1,$P2,$(M1*P2)}(pd + $(s*M*P1))
             ptr_x12 = PointerRecursiveMatrix{$T,$N1,$P2,$(N1*P2)}(px + $(s*N*P1))
-            prefetch(pa + $(s*M *N1))           # prefetch a12
-            prefetch(px + $(s*(N*P1+N1*P2)))    # prefetch x22
+            prefetch(pav + $(s*M *N1), Val{$fetch_locality}())           # prefetch a12
+            prefetch(pxv + $(s*(N*P1+N1*P2)), Val{$fetch_locality}())    # prefetch x22
             $(mul)( ptr_d12, ptr_a11, ptr_x12 )
             ptr_x22 = PointerRecursiveMatrix{$T,$N2,$P2,$(N2*P2)}(px + $(s*(N*P1+N1*P2)))
-            prefetch(pa + $(s*M1*N1))           # prefetch a21
-            prefetch(px + $(s*N*P1))            # prefetch x12
+            prefetch(pav + $(s*M1*N1), Val{$fetch_locality}())           # prefetch a21
+            prefetch(pxv + $(s*N*P1), Val{$fetch_locality}())            # prefetch x12
             gemm!( ptr_d12, ptr_a12, ptr_x22 )
 
 
 
             ptr_d22 = PointerRecursiveMatrix{$T,$M2,$P2,$(M2*P2)}(pd + $(s*(M*P1 + M1*P2)))
-            prefetch(pa + $(s*(M *N1 + M1*N2))) # prefetch a22
-            prefetch(px + $(s*(N*P1+N1*P2)))    # prefetch x22
+            prefetch(pav + $(s*(M *N1 + M1*N2)), Val{$fetch_locality}()) # prefetch a22
+            prefetch(pxv + $(s*(N*P1+N1*P2)), Val{$fetch_locality}())    # prefetch x22
             $(mul)( ptr_d22, ptr_a21, ptr_x12 )
             gemm!( ptr_d22, ptr_a22, ptr_x22 )
             nothing
@@ -1054,8 +1099,8 @@ end
 @generated function gemm!(D::MutableRecursiveMatrix{T,M,P,LD},
                         A::MutableRecursiveMatrix{T,M,N,LA},
                         X::MutableRecursiveMatrix{T,N,P,LX}) where {T,M,N,P,LA,LX,LD}
-    # maxdim = max(M,N,P) # two orders, so we can easily force generated function to rerun =P
-    maxdim = max(M,P,N)
+    maxdim = max(M,N,P) # two orders, so we can easily force generated function to rerun =P
+    # maxdim = max(M,P,N)
     if maxdim <= cutoff # No recursion; we multiply.
         return mul_kernel(T,M,N,P, vistransposed(A), vistransposed(X), :(+=))
     elseif maxdim <= 3cutoff
