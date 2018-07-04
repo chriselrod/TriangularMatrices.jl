@@ -1,8 +1,7 @@
 module TriangularMatrices
 
-using Compat, Compat.LinearAlgebra
-const LinearAlgebra = Compat.LinearAlgebra
-using   Base.Cartesian,
+using   LinearAlgebra,
+        Base.Cartesian,
         MacroTools,
         StaticArrays # Drop, eventually?
 

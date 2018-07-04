@@ -54,7 +54,7 @@ end
             mul!(d_m, Matrix(a_r), Matrix(x_r))
         end
         @test check_approx_equality(d_m, d_r)
-    end
+    # end
 end
 
 

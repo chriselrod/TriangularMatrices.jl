@@ -43,7 +43,7 @@ function Base.copyto!(x::RecursiveVector{T,L}, y::RecursiveVector{T,L}) where {T
 end
 Base.copy(x::RecursiveVector{T,L}) where {T,L} = copyto!(RecursiveVector{T,L}(), x)
 
-function Base.scale!(x::RecursiveVector{T,L}, α) where {T,L}
+function LinearAlgebra.scale!(x::RecursiveVector{T,L}, α) where {T,L}
     @inbounds @simd for l ∈ 1:L
         x[l] *= α
     end

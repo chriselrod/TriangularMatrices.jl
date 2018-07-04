@@ -9,9 +9,10 @@ struct StaticSymmetricMatrix{T,N,L} <: AbstractSymmetricMatrix{T,N,L}
 end
 mutable struct SymmetricMatrix{T,N,L} <: MutableSymmetricMatrix{T,N,L}
     data::NTuple{L,T}
-    @generated function SymmetricMatrix{T,N}() where {T,N}
+    @generated SymmetricMatrix{T,N}() where {T,N} = :(SymmetricMatrix{$T,$N,$(N*N)}())
+    function SymmetricMatrix{T,N,L}() where {T,N,L}
         isbits(T) || error("Can only construct mutable isbits matrices.")
-        :(new{$T,$N,$(N*N)}())
+        new{T,N,L}()
     end
     function SymmetricMatrix{T, N, L}(d::NTuple{L,T}) where {T,N,L}
         isbits(T) || error("Can only construct mutable isbits matrices.")
