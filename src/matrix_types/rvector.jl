@@ -18,6 +18,14 @@ struct PointerRecursiveVector{T,M,N,L} <: MutableRecursiveVector{T,L}
     # PointerRecursiveVector(ptr::Ptr{StaticRecursiveVector{T,cutoff,cutoff,cutoff2}}, ::Val{M}, ::Val{N}, ::Val{L}) where {T,M,N,L} = new{T,M,N,L}(ptr)
 end
 
+randvec(n) = randvec(Val(n))
+function randvec(::Val{L}) where L
+    out = RecursiveVector{Float64,L}()
+    @inbounds for i ∈ 1:L
+        out[i] = randn()
+    end
+    out
+end
 
 @inline float_point(A::RecursiveVector{T}) where T = Base.unsafe_convert(Ptr{T}, pointer_from_objref(A))
 @inline float_point(A::PointerRecursiveVector{T}) where T = Base.unsafe_convert(Ptr{T}, A.data)
