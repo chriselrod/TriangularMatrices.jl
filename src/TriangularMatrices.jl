@@ -24,8 +24,9 @@ export  SymmetricMatrix,
         xxt,
         xtx,
         # inv!,
-        randmat,
+        randmat, # Should fix that rand interface!!!
         srandmat,
+        randvec,
         RecursiveVector,
         choldet!,
         invdet!

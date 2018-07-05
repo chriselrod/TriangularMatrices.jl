@@ -38,6 +38,7 @@ end
 @inline float_point(A::PointerRecursiveVector{T}) where T = Base.unsafe_convert(Ptr{T}, A.data)
 
 Base.similar(::RecursiveVector{T,L}) where {T,L} = RecursiveVector{T,L}()
+Base.similar(::RecursiveVector{T,L}, ::Type{Tnew}) where {T,L,Tnew} = RecursiveVector{Tnew,L}()
 @inline Base.size(::RecursiveVector{T,L}) where {T,L} = (L,)
 @inline Base.length(::RecursiveVector{T,L}) where {T,L} = L
 @inline function Base.getindex(x::RecursiveVector{T,L}, i::Int) where {T,L}
