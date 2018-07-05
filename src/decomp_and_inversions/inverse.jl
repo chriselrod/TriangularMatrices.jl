@@ -1,6 +1,6 @@
 
-function gen_inv_quote(T, N, N2)
-    q, qa = initial_quote(N2::Int, :U)
+function gen_inv_quote(T, N, L)
+    q, qa = initial_quote(L::Int, :U)
 
     for i ∈ 1:N
         lti = small_triangle(i)
@@ -24,10 +24,10 @@ function gen_inv_quote(T, N, N2)
         end
     end
 
-    push!(q.args, :($T( ( @ntuple $N2 Ui ) )))
+    push!(q.args, :($T( ( @ntuple $L Ui ) )))
     q
 end
-function gen_ip_inv_quote!(qa, N, N2, Ui = :Ui, U = :U, extract = extract_symbol)
+function gen_ip_inv_quote!(qa, N, L, Ui = :Ui, U = :U, extract = extract_symbol)
 
     temp_num = 0
 
@@ -55,16 +55,16 @@ function gen_ip_inv_quote!(qa, N, N2, Ui = :Ui, U = :U, extract = extract_symbol
         end
     end
 
-    # push!(q.args, :($T( ( @ntuple $N2 Ui ) )))
+    # push!(q.args, :($T( ( @ntuple $L Ui ) )))
     qa
 end
 
 
-@generated function LinearAlgebra.inv(U::AbstractUpperTriangular{T,N,N2}) where {T,N,N2}
-    gen_inv_quote(UpperTriangularMatrix{T,N,N2}, N, N2)
+@generated function LinearAlgebra.inv(U::AbstractUpperTriangular{T,N,L}) where {T,N,L}
+    gen_inv_quote(UpperTriangularMatrix{T,N,L}, N, L)
 end
-@generated function LinearAlgebra.inv(U::AbstractLowerTriangular{T,N,N2}) where {T,N,N2}
-    gen_inv_quote(LowerTriangularMatrix{T,N,N2}, N, N2)
+@generated function LinearAlgebra.inv(U::AbstractLowerTriangular{T,N,L}) where {T,N,L}
+    gen_inv_quote(LowerTriangularMatrix{T,N,L}, N, L)
 end
 
 function gen_extracted_ip_inv_quote!(qa, N, L, Ui = :Ui, U = :U)

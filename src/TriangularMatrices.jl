@@ -26,7 +26,10 @@ export  SymmetricMatrix,
         # inv!,
         randmat,
         srandmat,
-        RecursiveVector
+        RecursiveVector,
+        choldet!,
+        invdet!
+
 
 
 

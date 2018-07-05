@@ -214,6 +214,13 @@ end
     out
 end
 
+@inline function Base.setindex(S::LinearAlgebra.Symmetric{RecursiveMatrix{T,N,N,L}}, val, i, j) where {T,N,L}
+    S.data[i,j] = val
+end
+@inline function Base.setindex(S::LinearAlgebra.Symmetric{RecursiveMatrix{T,N,N,L}}, val, i) where {T,N,L}
+    S.data[i] = val
+end
+
 # Base.getindex(A::RecursiveMatrixOrTranpose{T,M,N}, i::Int, j::Int) where {T,M,N} = A.data[dense_sub2ind((M,N),i,j)]
 @generated function Base.getindex(A::RecursiveMatrixOrTranpose{T,M,N,L}, i::Int, j::Int) where {T,M,N,L}
     bounds_error_string = "($M, $N) array at index (\$i,\$j)."

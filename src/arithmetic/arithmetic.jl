@@ -59,29 +59,25 @@ end
 
 
 
-function gen_upper_xxt_quote(T,N,N2)
-    q, qa = initial_quote(N2)
+function gen_upper_xxt_quote!(qa,T,N,L, A = :A, B = :B, extract = id_symbol)
     for i ∈ 1:N
         lti = small_triangle(i)
         for j ∈ 1:i
-            B_i = Symbol(:B_, lti + j)
-            A1_i = Symbol(:A_, lti + j)
-            A2_i = Symbol(:A_, lti + i)
+            B_i = extract(B, lti + j)
+            A1_i = extract(A, lti + j)
+            A2_i = extract(A, lti + i)
             push!(qa, :($B_i = $A1_i * $A2_i) )
             for k ∈ i+1:N
                 ltk = small_triangle(k)
-                A1_i = Symbol(:A_, ltk + j)
-                A2_i = Symbol(:A_, ltk + i)
+                A1_i = extract(A, ltk + j)
+                A2_i = extract(A, ltk + i)
                 push!(qa, :($B_i += $A1_i * $A2_i) )
             end
         end
     end
-    push!(q.args, :(SymmetricMatrix{T,N,N2}( ( @ntuple $N2 B ) )))
-    q
 end
 
-function gen_upper_xtx_quote(T,N,N2)
-    q, qa = initial_quote(N2)
+function gen_upper_xtx_quote!(qa,T,N,L)
     for i ∈ 1:N
         lti = small_triangle(i)
         for j ∈ 1:i
@@ -97,12 +93,10 @@ function gen_upper_xtx_quote(T,N,N2)
             end
         end
     end
-    push!(q.args, :(SymmetricMatrix{T,N,N2}( ( @ntuple $N2 B ) )))
-    q
 end
 
 
-function gen_xxt_quote(T,M,N)
+function gen_xxt_quote!(qa,T,M,N,L)
     N2 = big_triangle(M) #number of elements in output
     q, qa = initial_quote(M*N)
     for i ∈ 1:M
@@ -120,12 +114,8 @@ function gen_xxt_quote(T,M,N)
             end
         end
     end
-    push!(q.args, :(SymmetricMatrix{$T,$M,$N2}( ( @ntuple $N2 B ) )))
-    q
 end
-function gen_xtx_quote(T,M,N)
-    N2 = big_triangle(N)
-    q, qa = initial_quote(M*N)
+function gen_xtx_quote!(qa,T,M,N,L)
     for i ∈ 1:N
         offseti = (i-1)*M
         lti = small_triangle(i)
@@ -142,28 +132,70 @@ function gen_xtx_quote(T,M,N)
             end
         end
     end
-    push!(q.args, :(SymmetricMatrix{$T,$N,$N2}( ( @ntuple $N2 B ) )))
+end
+
+
+
+@generated function xxt(A::UpperTriangularMatrix{T,N,L}) where {T,N,L}
+    q, qa = initial_quote(L)
+    gen_upper_xxt_quote!(qa,T,N,L)
+    push!(q.args, :(SymmetricMatrix{$T,$N,$L}( ( @ntuple $L B ) )))
     q
 end
-
-
-
-@generated function xxt(A::UpperTriangularMatrix{T,N,N2}) where {T,N,N2}
-    gen_upper_xxt_quote(T,N,N2)
+@generated function xtx(A::UpperTriangularMatrix{T,N,L}) where {T,N,L}
+    q, qa = initial_quote(L)
+    gen_upper_xtx_quote!(qa,T,N,L)
+    push!(q.args, :(SymmetricMatrix{$T,$N,$L}( ( @ntuple $L B ) )))
+    q
 end
-@generated function xtx(A::UpperTriangularMatrix{T,N,N2}) where {T,N,N2}
-    gen_upper_xtx_quote(T,N,N2)
+@generated function xxt(A::Union{SMatrix{M,N,T},StaticRecursiveMatrix{T,M,N}}) where {T,M,N}
+    q, qa = initial_quote(M*N)
+    L = big_triangle(M)
+    gen_xxt_quote!(qa,T,M,N,L)
+    push!(q.args, :(SymmetricMatrix{$T,$M,$L}( ( @ntuple $L B ) )))
+    q
 end
-@generated function xxt(A::SMatrix{M,N,T}) where {T,M,N}
-    gen_xxt_quote(T,M,N)
-end
-@generated function xtx(A::SMatrix{M,N,T}) where {T,M,N}
-    gen_xtx_quote(T,M,N)
+@generated function xtx(A::Union{SMatrix{M,N,T},StaticRecursiveMatrix{T,M,N}}) where {T,M,N}
+    q, qa = initial_quote(M*N)
+    L = big_triangle(N)
+    gen_xtx_quote!(qa,T,M,N,L)
+    push!(q.args, :(SymmetricMatrix{$T,$N,$L}( ( @ntuple $L B ) )))
+    q
 end
 
 xxt(A::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = xtx(UpperTriangularMatrix{T,N,N2}(A.data))
 xtx(A::LowerTriangularMatrix{T,N,N2}) where {T,N,N2} = xxt(UpperTriangularMatrix{T,N,N2}(A.data))
 
+@generated function xxt!(A::UpperTriangularMatrix{T,N,L}) where {T,N,L}
+    q, qa = initial_quote(L)
+    gen_upper_xxt_quote!(qa,T,N,L)
+    push!(q.args, :(SymmetricMatrix{$T,$N,$L}( ( @ntuple $L B ) )))
+    q
+end
+@generated function xtx!(A::UpperTriangularMatrix{T,N,L}) where {T,N,L}
+    q, qa = initial_quote(L)
+    gen_upper_xtx_quote!(qa,T,N,L)
+    push!(q.args, :(SymmetricMatrix{$T,$N,$L}( ( @ntuple $L B ) )))
+    q
+end
+@generated function xxt!(A::Union{MMatrix{M,N,T},RecursiveMatrix{T,M,N}}) where {T,M,N}
+    q, qa = initial_quote(M*N)
+    L = big_triangle(M)
+    gen_xxt_quote!(qa,T,M,N,L)
+    push!(q.args, :(SymmetricMatrix{$T,$M,$L}( ( @ntuple $L B ) )))
+    q
+end
+@generated function xtx!(A::Union{MMatrix{M,N,T},RecursiveMatrix{T,M,N}}) where {T,M,N}
+    q, qa = initial_quote(M*N)
+    L = big_triangle(N)
+    gen_xtx_quote!(qa,T,M,N,L)
+    push!(q.args, :(SymmetricMatrix{$T,$N,$L}( ( @ntuple $L B ) )))
+    q
+end
+
+function chol2inv!()
+    
+end
 
 # output is an N x N2 SMatrix
 function AU_quote!(qa, N, N2)
