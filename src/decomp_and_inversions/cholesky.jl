@@ -303,7 +303,7 @@ end
     ind = 0
     for nc ∈ 1:N, nr ∈ 1:nc
         ind += 1
-        push!(qa, :( $(Symbol(:S_, ind) = S.data[$nr, $nc]) ))
+        push!(qa, :( $(Symbol(:S_, ind)) = S.data[$nr, $nc] ))
     end
 
     gen_ip_choldet_quote!(qa, T, N, L, :S, :S, id_symbol) #in this file, cholesky.jl
@@ -333,7 +333,7 @@ end
     ind = 0
     for nc ∈ 1:N, nr ∈ 1:nc
         ind += 1
-        push!(qa, :( $(Symbol(:S_, ind) = S.data[$nr, $nc]) ))
+        push!(qa, :( $(Symbol(:S_, ind)) = S.data[$nr, $nc]) )
     end
 
     gen_ip_choldet_quote!(qa, T, N, L, :S, :S, id_symbol) #in this file, cholesky.jl
@@ -354,7 +354,7 @@ end
         ind = 0
         for nc ∈ 1:N, nr ∈ 1:nc
             ind += 1
-            push!(qa, :( $(Symbol(:S_, ind) = S.data[$nr, $nc]) ))
+            push!(qa, :( $(Symbol(:S_, ind)) = S.data[$nr, $nc]) )
         end
     else
         L_triangle = L1
@@ -417,7 +417,7 @@ end
     ind = 0
     for nc ∈ 1:N, nr ∈ 1:nc
         ind += 1
-        push!(qa, :( $(Symbol(:S_, ind) = S.data[$nr, $nc]) ))
+        push!(qa, :( $(Symbol(:S_, ind)) = S.data[$nr, $nc]) )
     end
     # extract_linear!(qa, L, :S)
 
@@ -440,7 +440,7 @@ end
     ind = 0
     for nc ∈ 1:N, nr ∈ 1:nc
         ind += 1
-        push!(qa, :( $(Symbol(:S_, ind) = S.data[$nr, $nc]) ))
+        push!(qa, :( $(Symbol(:S_, ind)) = S.data[$nr, $nc]) )
     end
     # extract_linear!(qa, L, :S)
 
@@ -464,7 +464,7 @@ end
         ind = 0
         for nc ∈ 1:N, nr ∈ 1:nc
             ind += 1
-            push!(qa, :( $(Symbol(:S_, ind) = S.data[$nr, $nc]) ))
+            push!(qa, :( $(Symbol(:S_, ind)) = S.data[$nr, $nc]) )
         end
     else
         L_triangle = L1
