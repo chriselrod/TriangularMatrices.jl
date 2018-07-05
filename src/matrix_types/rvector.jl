@@ -12,6 +12,13 @@ mutable struct RecursiveVector{T,L} <: MutableRecursiveVector{T,L}
     data::NTuple{L,T}
     RecursiveVector{T,L}(data::NTuple{L,T}) where {T,L} = new(data)
     RecursiveVector{T,L}() where {T,L} = new()
+    function RecursiveVector{T,L}(x::AbstractVector{T}) where {T,L}
+        out = RecursiveVector{T,L}()
+        @inbounds for l ∈ 1:L
+            out[l] = x[l]
+        end
+        out
+    end
 end
 struct PointerRecursiveVector{T,M,N,L} <: MutableRecursiveVector{T,L}
     data::Ptr{StaticRecursiveVector{T,cutoff}}
