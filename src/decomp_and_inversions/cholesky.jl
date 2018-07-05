@@ -293,7 +293,7 @@ end
     q, qa = create_quote()
     extract_linear!(qa, L, :S)
     gen_ip_choldet_quote!(qa, T, N, L, :S, :S, id_symbol) #in this file, cholesky.jl
-    insert_linear!(qa, L, :S, :Si)
+    insert_linear!(qa, L, :S)
     push!(q.args, :(root_det))
     q
 end
@@ -311,7 +311,7 @@ end
     ind = 0
     for nc ∈ 1:N, nr ∈ 1:nc
         ind += 1
-        push!(qa, :( S.data[$nr, $nc] = $(Symbol(:Si_, ind)) ))
+        push!(qa, :( S.data[$nr, $nc] = $(Symbol(:S_, ind)) ))
     end
     push!(q.args, :(root_det))
     q
@@ -322,7 +322,7 @@ end
     q, qa = create_quote()
     extract_linear!(qa, L, :S)
     gen_ip_choldet_quote!(qa, T, N, L, :S, :S, id_symbol) #in this file, cholesky.jl
-    insert_linear!(qa, L, :S, :Si)
+    insert_linear!(qa, L, :S, :S)
     push!(q.args, :(root_det))
     q
 end
@@ -341,7 +341,7 @@ end
     ind = 0
     for nc ∈ 1:N, nr ∈ 1:nc
         ind += 1
-        push!(qa, :( S.data[$nr, $nc] = $(Symbol(:Si_, ind)) ))
+        push!(qa, :( S.data[$nr, $nc] = $(Symbol(:S_, ind)) ))
     end
     push!(q.args, :(root_det))
     q
@@ -367,10 +367,10 @@ end
         ind = 0
         for nc ∈ 1:N, nr ∈ 1:nc
             ind += 1
-            push!(qa, :( Si.data[$nr, $nc] = $(Symbol(:Si_, ind)) ))
+            push!(qa, :( Si.data[$nr, $nc] = $(Symbol(:S_, ind)) ))
         end
     else
-        insert_linear!(qa, L_triangle, :Si)
+        insert_linear!(qa, L_triangle, :S)
     end
     push!(q.args, :(root_det))
     q
