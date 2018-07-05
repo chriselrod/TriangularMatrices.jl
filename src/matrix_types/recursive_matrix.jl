@@ -214,10 +214,10 @@ end
     out
 end
 
-@inline function Base.setindex(S::Symmetric{T,RecursiveMatrix{T,N,N,L}}, val, i, j) where {T,N,L}
+@inline function Base.setindex!(S::Symmetric{T,RecursiveMatrix{T,N,N,L}}, val, i::Integer, j::Integer) where {T,N,L}
     S.data[i,j] = val
 end
-@inline function Base.setindex(S::Symmetric{T,RecursiveMatrix{T,N,N,L}}, val, i) where {T,N,L}
+@inline function Base.setindex!(S::Symmetric{T,RecursiveMatrix{T,N,N,L}}, val, i::Integer) where {T,N,L}
     S.data[i] = val
 end
 
