@@ -6,8 +6,6 @@
     extract_linear!(qa, L, :S)
     extract_linear!(qa, N, :x)
 
-
-
     dnr = Symbol(:d_, 1)
     push!(qa, :( $dnr = S[1] * x[1] ) )
     for c ∈ 2:N

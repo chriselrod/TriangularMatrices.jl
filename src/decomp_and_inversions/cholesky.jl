@@ -297,7 +297,7 @@ end
     push!(q.args, :(root_det))
     q
 end
-@generated function choldet!(S::LinearAlgebra.Symmetric{RecursiveMatrix{T,N,N,N2}}) where {T,N,N2}
+@generated function choldet!(S::LinearAlgebra.Symmetric{T,RecursiveMatrix{T,N,N,N2}}) where {T,N,N2}
     q, qa = create_quote()
     L = big_triangle(N)
     ind = 0
@@ -326,7 +326,7 @@ end
     push!(q.args, :(root_det))
     q
 end
-@generated function choldet!(S::LinearAlgebra.Symmetric{RecursiveMatrix{T,M,M,N2}}, ::Val{N}) where {T,M,N,N2}
+@generated function choldet!(S::LinearAlgebra.Symmetric{T,RecursiveMatrix{T,M,M,N2}}, ::Val{N}) where {T,M,N,N2}
     @assert N <= M
     q, qa = create_quote()
     L = big_triangle(N)
@@ -346,8 +346,8 @@ end
     push!(q.args, :(root_det))
     q
 end
-@generated function choldet!(Si::Union{SymmetricMatrix{T,N,L1},Symmetric{RecursiveMatrix{T,N,N,L1}}},
-                            S::Union{SymmetricMatrix{T,N,L2},Symmetric{RecursiveMatrix{T,N,N,L2}}}) where {T,N,L1,L2}
+@generated function choldet!(Si::Union{SymmetricMatrix{T,N,L1},Symmetric{T,RecursiveMatrix{T,N,N,L1}}},
+                            S::Union{SymmetricMatrix{T,N,L2},Symmetric{T,RecursiveMatrix{T,N,N,L2}}}) where {T,N,L1,L2}
     q, qa = create_quote()
     if S <: Symmetric
         L_triangle = big_triangle(N)
@@ -411,7 +411,7 @@ end
     push!(q.args, :(root_det))
     q
 end
-@generated function invdet!(S::LinearAlgebra.Symmetric{RecursiveMatrix{T,N,N,N2}}) where {T,N,N2}
+@generated function invdet!(S::LinearAlgebra.Symmetric{T,RecursiveMatrix{T,N,N,N2}}) where {T,N,N2}
     q, qa = create_quote()
     L = big_triangle(N)
     ind = 0
@@ -433,7 +433,7 @@ end
     push!(q.args, :(root_det))
     q
 end
-@generated function invdet!(S::LinearAlgebra.Symmetric{RecursiveMatrix{T,M,M,N2}}, ::Val{N}) where {T,N,N2,M}
+@generated function invdet!(S::LinearAlgebra.Symmetric{T,RecursiveMatrix{T,M,M,N2}}, ::Val{N}) where {T,N,N2,M}
     @assert N <= M
     q, qa = create_quote()
     L = big_triangle(N)
@@ -456,8 +456,8 @@ end
     push!(q.args, :(root_det))
     q
 end
-@generated function invdet!(Si::Union{SymmetricMatrix{T,N,L1},Symmetric{RecursiveMatrix{T,N,N,L1}}},
-                            S::Union{SymmetricMatrix{T,N,L2},Symmetric{RecursiveMatrix{T,N,N,L2}}}) where {T,N,L1,L2}
+@generated function invdet!(Si::Union{SymmetricMatrix{T,N,L1},Symmetric{T,RecursiveMatrix{T,N,N,L1}}},
+                            S::Union{SymmetricMatrix{T,N,L2},Symmetric{T,RecursiveMatrix{T,N,N,L2}}}) where {T,N,L1,L2}
     q, qa = create_quote()
     if S <: Symmetric
         L_triangle = big_triangle(N)
