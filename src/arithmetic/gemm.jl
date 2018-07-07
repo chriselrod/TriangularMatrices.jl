@@ -648,9 +648,10 @@ function mul_kernel(::Type{T}, M, N, P, tA=Val{false}(), tX=Val{false}(), eq = :
     else
         insert!(q.args, 1, :(Base.@_inline_meta))
     end
-    extract_linear!(qa, LA, :A)
-    extract_linear!(qa, LX, :X)
-    broadcast_mul_quote!(qa, T, M, N, P, tA, :A, tX, :X, :D, id_symbol, id_symbol, eq )
+    # extract_linear!(qa, LA, :A)
+    # extract_linear!(qa, LX, :X)
+    # broadcast_mul_quote!(qa, T, M, N, P, tA, :A, tX, :X, :D, id_symbol, id_symbol, eq )
+    broadcast_mul_quote!(qa, T, M, N, P, Val(false), :A, Val(false), :X, :D, extract_symbol, extract_symbol, id_symbol, :(=) )
     insert_linear!(qa, LD, :D)
     # isa(dummy, Bool) || push!(q.args, :C) # worth considering?
     push!(q.args, :D)
