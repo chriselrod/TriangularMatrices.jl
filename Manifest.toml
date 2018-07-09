@@ -66,9 +66,9 @@ uuid = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [[StaticArrays]]
 deps = ["InteractiveUtils", "LinearAlgebra", "Random", "Statistics", "Test"]
-git-tree-sha1 = "acc0208265c71e22f90c83bbd3d92d7a3bc0ea6f"
+git-tree-sha1 = "d998a83bc2cd507e12b08203e7523f2e60ac9ee6"
 uuid = "90137ffa-7385-5640-81b9-e52037218182"
-version = "0.8.0"
+version = "0.8.2"
 
 [[Statistics]]
 uuid = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
