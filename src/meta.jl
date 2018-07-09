@@ -43,7 +43,7 @@ function extract_linear!(qa, N, prefix = :B, extractedvar = prefix, ind_offset =
     end
     qa
 end
-function insert_linear!(qa, N, prefix::Symbol = :B, ind_offset::Int, label_offset::Int = 0)
+function insert_linear!(qa, N, prefix::Symbol, ind_offset::Int, label_offset::Int = 0)
     prefix_ = Symbol(prefix, :_)
     for i ∈ 1:N
         push!(qa, :( $(prefix)[$(i+ind_offset)] = $(Symbol(prefix_, i + label_offset))) )
